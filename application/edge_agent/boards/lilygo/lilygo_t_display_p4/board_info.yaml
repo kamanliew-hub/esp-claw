@@ -1,0 +1,4 @@
+board: lilygo_t_display_p4
+chip: esp32p4
+description: "LilyGO T-Display-P4 Development Board"
+manufacturer: "LilyGO"

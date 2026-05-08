@@ -1,0 +1,59 @@
+menu "lilygo t-display-p4 configuration"
+
+    choice
+        prompt "Select the camera type"
+        default CAMERA_TYPE_OV2710
+            config CAMERA_TYPE_SC2336
+                bool "SC2336"
+            config CAMERA_TYPE_OV2710
+                bool "OV2710"
+            config CAMERA_TYPE_OV5645
+                bool "OV5645"
+    endchoice
+
+    choice
+        prompt "Select the screen type"
+        default SCREEN_TYPE_HI8561
+            config SCREEN_TYPE_HI8561
+                bool "HI8561"
+            config SCREEN_TYPE_RM69A10
+                bool "RM69A10"
+    endchoice
+
+    choice
+        prompt "Select the color format of the screen"
+        default SCREEN_PIXEL_FORMAT_RGB565
+            config SCREEN_PIXEL_FORMAT_RGB565
+                bool "RGB565"
+            config SCREEN_PIXEL_FORMAT_RGB888
+                bool "RGB888"
+    endchoice
+
+    choice
+        prompt "Select the color format of the camera"
+        default CAMERA_PIXEL_FORMAT_RGB565
+            config CAMERA_PIXEL_FORMAT_RGB565
+                bool "RGB565"
+            config CAMERA_PIXEL_FORMAT_RGB888
+                bool "RGB888"
+    endchoice
+
+    choice BOARD_TYPE
+        prompt "Board type"
+        default BOARD_TYPE_T_DISPLAY_P4
+        config BOARD_TYPE_T_DISPLAY_P4
+            bool "t-display-p4"
+        config BOARD_TYPE_T_DISPLAY_P4_KEYBOARD
+            bool "t-display-p4-keyboard"
+    endchoice
+
+    choice BOARD_VERSION_T_DISPLAY_P4
+        prompt "Board version T-Display-P4"
+        default BOARD_VERSION_T_DISPLAY_P4_V2_0
+        config BOARD_VERSION_T_DISPLAY_P4_V1_0
+            bool "t-display-p4_v1.0"
+        config BOARD_VERSION_T_DISPLAY_P4_V2_0
+            bool "t-display-p4_v2.0"
+    endchoice
+
+endmenu
