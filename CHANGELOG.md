@@ -1,5 +1,12 @@
 # ChangeLog
 
+## 2026-05-08
+
+### Refactor:
+
+* **Breaking change**: Removed the LLM Profile concept. You may need to update your LLM configuration accordingly.
+  * A forward compatibility transition has been added for now and will be removed in a future release.
+
 ## 2026-05-07
 
 ### Tools:
