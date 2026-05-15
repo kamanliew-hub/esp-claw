@@ -106,6 +106,7 @@ esp_err_t camera_flush(void);
 
 bool camera_is_open(void);
 bool camera_is_streaming(void);
+esp_err_t camera_get_borrowed_count(uint32_t *out_count);
 
 /**
  * @brief Enumerate supported pixel formats via VIDIOC_ENUM_FMT.

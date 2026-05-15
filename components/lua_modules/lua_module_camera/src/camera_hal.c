@@ -119,9 +119,9 @@ static void camera_fourcc_to_string(uint32_t pixel_format, char out[5])
 
 static void camera_apply_internal_sizeimage(struct v4l2_format *format)
 {
-    const uint32_t jpeg_min_size = 40000U;
-    const uint32_t jpeg_compression_ratio = 6U;
-    const uint32_t jpeg_source_bpp = 16U;
+    const uint32_t img_min_size = 40000U;
+    const uint32_t img_compression_ratio = 6U;
+    const uint32_t img_source_bpp = 16U;
     uint64_t pixels;
     uint64_t size;
 
@@ -146,9 +146,9 @@ static void camera_apply_internal_sizeimage(struct v4l2_format *format)
     }
 
     /* esp_video consumes sizeimage in VIDIOC_S_FMT; estimate compressed buffers only when the driver did not provide one. */
-    size = ((pixels * jpeg_source_bpp / 8U) + jpeg_compression_ratio - 1U) / jpeg_compression_ratio;
-    if (size < jpeg_min_size) {
-        size = jpeg_min_size;
+    size = ((pixels * img_source_bpp / 8U) + img_compression_ratio - 1U) / img_compression_ratio;
+    if (size < img_min_size) {
+        size = img_min_size;
     }
     if (size > UINT32_MAX) {
         return;
@@ -198,6 +198,19 @@ static void camera_close_locked(void)
         s_camera.buffer_lengths[i] = 0;
     }
     s_camera.buffer_count = 0;
+
+    if (s_camera.fd >= 0) {
+        struct v4l2_requestbuffers request = {
+            .count = 0,
+            .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+            .memory = V4L2_MEMORY_MMAP,
+        };
+
+        /* Release driver-owned buffers allocated by VIDIOC_REQBUFS. */
+        if (ioctl(s_camera.fd, VIDIOC_REQBUFS, &request) != 0) {
+            ESP_LOGW(TAG, "VIDIOC_REQBUFS release failed (errno=%d)", errno);
+        }
+    }
 
     if (s_camera.fd >= 0) {
         close(s_camera.fd);
@@ -927,6 +940,24 @@ bool camera_is_streaming(void)
     streaming = s_camera.opened && s_camera.streaming && !s_camera.close_pending;
     camera_unlock();
     return streaming;
+}
+
+esp_err_t camera_get_borrowed_count(uint32_t *out_count)
+{
+    esp_err_t err;
+
+    if (out_count == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    err = camera_lock();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    *out_count = s_camera.borrowed_count;
+    camera_unlock();
+    return ESP_OK;
 }
 
 esp_err_t camera_enum_format(uint32_t index, camera_format_desc_t *out)

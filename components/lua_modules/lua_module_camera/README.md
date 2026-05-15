@@ -106,6 +106,7 @@ its methods live in the `image` module so that any frame producer
 Important:
 - `camera.get_frame()` is a **borrow** API, not a copy. The driver owns the buffer.
 - Multiple frames may be borrowed at the same time, up to the camera driver buffer count. Release frames promptly so capture buffers return to the driver.
+- Converted `image.frame` views can share the same borrowed camera buffer. Release all derived views before `camera.close()`.
 - Prefer the Lua 5.4+ `<close>` attribute so the frame is released
   deterministically when the variable leaves scope:
   ```lua
@@ -117,6 +118,7 @@ Important:
 - The raw format can be RGB565, YUV, GRAY, JPEG or MJPEG depending on the
   driver. Consumers (display, vision, JPEG encode) request the format they
   need through `image`.
+- `camera.close()` fails with an explicit error when frames are still borrowed.
 
 ## Saving a frame as JPEG
 

@@ -5,10 +5,12 @@
  */
 #include "lua_module_camera.h"
 
+#include <inttypes.h>
 #include <stdint.h>
 #include <string.h>
 
 #include "cap_lua.h"
+#include "esp_log.h"
 #include "lua_image.h"
 #include "lauxlib.h"
 #include "lua.h"
@@ -16,13 +18,18 @@
 
 #define LUA_MODULE_CAMERA_NAME "camera"
 
+static const char *TAG = "lua_camera";
+
 /* Camera-side release hook. The service can hold multiple borrowed buffers,
  * each identified by its data pointer; ctx is unused. */
 static void lua_module_camera_frame_release_cb(void *ctx, const uint8_t *data)
 {
     (void)ctx;
     if (data != NULL) {
-        camera_release_frame((void *)data);
+        esp_err_t err = camera_release_frame((void *)data);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "failed to release camera frame: %s", esp_err_to_name(err));
+        }
     }
 }
 
@@ -330,6 +337,11 @@ static int lua_module_camera_close(lua_State *L)
     esp_err_t err = camera_close();
 
     if (err != ESP_OK) {
+        uint32_t borrowed_count = 0;
+        if (err == ESP_ERR_INVALID_STATE && camera_get_borrowed_count(&borrowed_count) == ESP_OK && borrowed_count > 0) {
+            return luaL_error(L, "camera close failed: %" PRIu32 " image frame(s) still hold camera buffers; "
+                              "release all frame views first", borrowed_count);
+        }
         return luaL_error(L, "camera close failed: %s", esp_err_to_name(err));
     }
 
