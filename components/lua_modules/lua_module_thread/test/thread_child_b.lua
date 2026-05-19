@@ -10,16 +10,10 @@ local lock_name = assert(args.lock_name, "args.lock_name is required")
 assert(sync.sem_take(sem_name, 5000))
 
 local msg = assert(sync.queue_recv(queue_to_b, 5000))
-assert(msg.from == "child_a")
-assert(msg.to == "child_b")
-assert(msg.text == "queue handoff")
+assert(msg == "child_a\0child_b\0queue handoff")
 
 assert(sync.lock(lock_name, 5000))
-assert(sync.queue_send(queue_to_parent, {
-    from = "child_b",
-    to = "parent",
-    text = "ack",
-}, 5000))
+assert(sync.queue_send(queue_to_parent, "child_b\0parent\0ack", 5000))
 assert(sync.unlock(lock_name))
 
 print("thread_child_b ok")

@@ -12,7 +12,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "cJSON.h"
 #include "cap_lua.h"
 #include "esp_err.h"
 #include "lauxlib.h"
@@ -25,11 +24,10 @@
 #define THREAD_SYNC_NAME_MAX 32
 #define THREAD_SYNC_QUEUE_DEPTH_DEFAULT 8
 #define THREAD_SYNC_QUEUE_DEPTH_MAX 32
-#define THREAD_SYNC_QUEUE_MAX_BYTES_DEFAULT 2048
-#define THREAD_SYNC_QUEUE_MAX_BYTES_MAX 4096
+#define THREAD_SYNC_QUEUE_ITEM_SIZE_DEFAULT 256
+#define THREAD_SYNC_QUEUE_ITEM_SIZE_MAX 4096
 #define THREAD_SYNC_SEM_MAX_COUNT 255
 #define THREAD_SYNC_WAIT_STEP_MS 50
-#define THREAD_SYNC_JSON_MAX_DEPTH 64
 
 typedef enum {
     THREAD_SYNC_TYPE_QUEUE = 0,
@@ -45,17 +43,16 @@ typedef struct thread_sync_object {
         SemaphoreHandle_t sem;
         SemaphoreHandle_t mutex;
     } handle;
-    size_t max_bytes;
+    size_t item_size;
     uint32_t waiter_count;
     TaskHandle_t lock_owner;
     struct thread_sync_object *next;
 } thread_sync_object_t;
 
 typedef struct {
-    bool is_array;
-    lua_Integer max_index;
-    lua_Integer count;
-} thread_sync_table_shape_t;
+    size_t len;
+    uint8_t data[];
+} thread_sync_queue_item_t;
 
 static thread_sync_object_t *s_objects;
 static SemaphoreHandle_t s_registry_lock;
@@ -192,201 +189,9 @@ static void thread_sync_release(thread_sync_object_t *obj)
     thread_sync_unlock_registry();
 }
 
-static thread_sync_table_shape_t thread_sync_get_table_shape(lua_State *L, int index)
+static size_t thread_sync_queue_storage_size(size_t item_size)
 {
-    thread_sync_table_shape_t shape = {
-        .is_array = false,
-        .max_index = 0,
-        .count = 0,
-    };
-
-    index = lua_absindex(L, index);
-    lua_pushnil(L);
-    while (lua_next(L, index) != 0) {
-        if (!lua_isinteger(L, -2)) {
-            lua_pop(L, 2);
-            return shape;
-        }
-
-        lua_Integer key = lua_tointeger(L, -2);
-        if (key <= 0) {
-            lua_pop(L, 2);
-            return shape;
-        }
-        if (key > shape.max_index) {
-            shape.max_index = key;
-        }
-        shape.count++;
-        lua_pop(L, 1);
-    }
-
-    shape.is_array = shape.count > 0 && shape.count == shape.max_index;
-    return shape;
-}
-
-static cJSON *thread_sync_json_from_value(lua_State *L, int index, int depth);
-
-static cJSON *thread_sync_json_from_array(lua_State *L,
-                                           int index,
-                                           lua_Integer count,
-                                           int depth)
-{
-    cJSON *json = cJSON_CreateArray();
-
-    if (!json) {
-        return NULL;
-    }
-
-    index = lua_absindex(L, index);
-    for (lua_Integer i = 1; i <= count; i++) {
-        lua_rawgeti(L, index, i);
-        cJSON *child = thread_sync_json_from_value(L, -1, depth + 1);
-        lua_pop(L, 1);
-        if (!child || !cJSON_AddItemToArray(json, child)) {
-            cJSON_Delete(child);
-            cJSON_Delete(json);
-            return NULL;
-        }
-    }
-    return json;
-}
-
-static cJSON *thread_sync_json_from_object(lua_State *L, int index, int depth)
-{
-    cJSON *json = cJSON_CreateObject();
-
-    if (!json) {
-        return NULL;
-    }
-
-    index = lua_absindex(L, index);
-    lua_pushnil(L);
-    while (lua_next(L, index) != 0) {
-        char key_buf[32];
-        const char *key = NULL;
-        cJSON *child = thread_sync_json_from_value(L, -1, depth + 1);
-
-        if (!child) {
-            lua_pop(L, 1);
-            cJSON_Delete(json);
-            return NULL;
-        }
-
-        if (lua_type(L, -2) == LUA_TSTRING) {
-            key = lua_tostring(L, -2);
-        } else if (lua_isinteger(L, -2)) {
-            snprintf(key_buf, sizeof(key_buf), "%lld", (long long)lua_tointeger(L, -2));
-            key = key_buf;
-        } else {
-            cJSON_Delete(child);
-            lua_pop(L, 1);
-            cJSON_Delete(json);
-            luaL_error(L, "thread.sync.queue_send: table keys must be strings or integers");
-            return NULL;
-        }
-
-        if (!cJSON_AddItemToObject(json, key, child)) {
-            cJSON_Delete(child);
-            lua_pop(L, 1);
-            cJSON_Delete(json);
-            return NULL;
-        }
-        lua_pop(L, 1);
-    }
-    return json;
-}
-
-static cJSON *thread_sync_json_from_value(lua_State *L, int index, int depth)
-{
-    if (depth > THREAD_SYNC_JSON_MAX_DEPTH) {
-        luaL_error(L, "thread.sync.queue_send: nested value too deep");
-    }
-
-    index = lua_absindex(L, index);
-    switch (lua_type(L, index)) {
-    case LUA_TBOOLEAN:
-        return cJSON_CreateBool(lua_toboolean(L, index));
-    case LUA_TNUMBER:
-        return cJSON_CreateNumber(lua_tonumber(L, index));
-    case LUA_TSTRING:
-        return cJSON_CreateString(lua_tostring(L, index));
-    case LUA_TTABLE: {
-        thread_sync_table_shape_t shape = thread_sync_get_table_shape(L, index);
-        if (shape.is_array) {
-            return thread_sync_json_from_array(L, index, shape.count, depth);
-        }
-        return thread_sync_json_from_object(L, index, depth);
-    }
-    case LUA_TNIL:
-        luaL_error(L, "thread.sync.queue_send: nil values are not supported");
-        return NULL;
-    default:
-        luaL_error(L, "thread.sync.queue_send: unsupported Lua type '%s'",
-                   luaL_typename(L, index));
-        return NULL;
-    }
-}
-
-static void thread_sync_push_json_value(lua_State *L, const cJSON *item)
-{
-    cJSON *child = NULL;
-    int index = 1;
-
-    if (!item || cJSON_IsNull(item)) {
-        lua_pushnil(L);
-        return;
-    }
-    if (cJSON_IsBool(item)) {
-        lua_pushboolean(L, cJSON_IsTrue(item));
-        return;
-    }
-    if (cJSON_IsNumber(item)) {
-        lua_pushnumber(L, item->valuedouble);
-        return;
-    }
-    if (cJSON_IsString(item)) {
-        lua_pushstring(L, item->valuestring ? item->valuestring : "");
-        return;
-    }
-    if (cJSON_IsArray(item)) {
-        lua_newtable(L);
-        cJSON_ArrayForEach(child, item) {
-            thread_sync_push_json_value(L, child);
-            lua_rawseti(L, -2, index++);
-        }
-        return;
-    }
-    if (cJSON_IsObject(item)) {
-        lua_newtable(L);
-        cJSON_ArrayForEach(child, item) {
-            thread_sync_push_json_value(L, child);
-            lua_setfield(L, -2, child->string);
-        }
-        return;
-    }
-    lua_pushnil(L);
-}
-
-static char *thread_sync_encode_value(lua_State *L, int index, size_t max_bytes)
-{
-    cJSON *json = thread_sync_json_from_value(L, index, 0);
-    char *payload = NULL;
-
-    if (!json) {
-        luaL_error(L, "thread.sync.queue_send: out of memory");
-    }
-
-    payload = cJSON_PrintUnformatted(json);
-    cJSON_Delete(json);
-    if (!payload) {
-        luaL_error(L, "thread.sync.queue_send: out of memory");
-    }
-
-    if (strlen(payload) > max_bytes) {
-        cJSON_free(payload);
-        luaL_error(L, "thread.sync.queue_send: encoded value exceeds max_bytes");
-    }
-    return payload;
+    return sizeof(thread_sync_queue_item_t) + item_size;
 }
 
 static TickType_t thread_sync_ms_to_ticks(uint32_t ms)
@@ -412,8 +217,9 @@ static int thread_sync_queue_create(lua_State *L)
     const char *name = thread_sync_check_name(L, 1);
     int opts_idx = lua_gettop(L) >= 2 && !lua_isnil(L, 2) ? 2 : 0;
     uint32_t depth = 0;
-    uint32_t max_bytes = 0;
+    uint32_t item_size = 0;
     thread_sync_object_t *obj = NULL;
+    size_t storage_size = 0;
 
     if (opts_idx && !lua_istable(L, opts_idx)) {
         return luaL_error(L, "thread.sync.queue_create: opts must be a table");
@@ -421,9 +227,10 @@ static int thread_sync_queue_create(lua_State *L)
     depth = thread_sync_opt_uint(L, opts_idx, "depth",
                                   THREAD_SYNC_QUEUE_DEPTH_DEFAULT,
                                   1, THREAD_SYNC_QUEUE_DEPTH_MAX);
-    max_bytes = thread_sync_opt_uint(L, opts_idx, "max_bytes",
-                                      THREAD_SYNC_QUEUE_MAX_BYTES_DEFAULT,
-                                      1, THREAD_SYNC_QUEUE_MAX_BYTES_MAX);
+    item_size = thread_sync_opt_uint(L, opts_idx, "item_size",
+                                      THREAD_SYNC_QUEUE_ITEM_SIZE_DEFAULT,
+                                      1, THREAD_SYNC_QUEUE_ITEM_SIZE_MAX);
+    storage_size = thread_sync_queue_storage_size(item_size);
 
     obj = calloc(1, sizeof(*obj));
     if (!obj) {
@@ -431,8 +238,8 @@ static int thread_sync_queue_create(lua_State *L)
     }
     obj->name = thread_sync_strdup(name);
     obj->type = THREAD_SYNC_TYPE_QUEUE;
-    obj->max_bytes = max_bytes;
-    obj->handle.queue = xQueueCreate(depth, sizeof(char *));
+    obj->item_size = item_size;
+    obj->handle.queue = xQueueCreate(depth, storage_size);
     if (!obj->name || !obj->handle.queue) {
         if (obj->handle.queue) {
             vQueueDelete(obj->handle.queue);
@@ -525,26 +332,42 @@ static int thread_sync_queue_delete(lua_State *L)
 static int thread_sync_queue_send(lua_State *L)
 {
     const char *name = thread_sync_check_name(L, 1);
+    size_t len = 0;
+    const char *data = NULL;
     uint32_t timeout_ms = thread_sync_timeout_arg(L, 3);
     thread_sync_object_t *obj = NULL;
-    char *payload = thread_sync_encode_value(L, 2, THREAD_SYNC_QUEUE_MAX_BYTES_MAX);
+    thread_sync_queue_item_t *item = NULL;
+    size_t storage_size = 0;
     BaseType_t ok = pdFALSE;
     uint32_t waited_ms = 0;
 
+    if (lua_type(L, 2) != LUA_TSTRING) {
+        return luaL_error(L, "thread.sync.queue_send: value must be a string");
+    }
+    data = lua_tolstring(L, 2, &len);
+
     obj = thread_sync_acquire(L, name, THREAD_SYNC_TYPE_QUEUE);
     if (!obj) {
-        cJSON_free(payload);
         return thread_sync_push_false_error(L, "not_found");
     }
-    if (strlen(payload) > obj->max_bytes) {
-        cJSON_free(payload);
+    if (len > obj->item_size) {
         thread_sync_release(obj);
-        return luaL_error(L, "thread.sync.queue_send: encoded value exceeds max_bytes");
+        return luaL_error(L, "thread.sync.queue_send: value exceeds item_size");
     }
+
+    storage_size = thread_sync_queue_storage_size(obj->item_size);
+    item = malloc(storage_size);
+    if (!item) {
+        thread_sync_release(obj);
+        return thread_sync_push_false_error(L, "no_mem");
+    }
+    item->len = len;
+    memcpy(item->data, data, len);
+
     do {
         uint32_t step_ms = 0;
         if (cap_lua_runtime_stop_requested(L)) {
-            cJSON_free(payload);
+            free(item);
             thread_sync_release(obj);
             return thread_sync_push_false_error(L, "stopped");
         }
@@ -552,8 +375,9 @@ static int thread_sync_queue_send(lua_State *L)
             uint32_t remaining = timeout_ms - waited_ms;
             step_ms = remaining > THREAD_SYNC_WAIT_STEP_MS ? THREAD_SYNC_WAIT_STEP_MS : remaining;
         }
-        ok = xQueueSend(obj->handle.queue, &payload, thread_sync_ms_to_ticks(step_ms));
+        ok = xQueueSend(obj->handle.queue, item, thread_sync_ms_to_ticks(step_ms));
         if (ok == pdTRUE) {
+            free(item);
             thread_sync_release(obj);
             lua_pushboolean(L, true);
             return 1;
@@ -561,7 +385,7 @@ static int thread_sync_queue_send(lua_State *L)
         waited_ms += step_ms;
     } while (timeout_ms > waited_ms);
 
-    cJSON_free(payload);
+    free(item);
     thread_sync_release(obj);
     return thread_sync_push_false_error(L, "timeout");
 }
@@ -571,7 +395,8 @@ static int thread_sync_queue_recv(lua_State *L)
     const char *name = thread_sync_check_name(L, 1);
     uint32_t timeout_ms = thread_sync_timeout_arg(L, 2);
     thread_sync_object_t *obj = thread_sync_acquire(L, name, THREAD_SYNC_TYPE_QUEUE);
-    char *payload = NULL;
+    thread_sync_queue_item_t *item = NULL;
+    size_t storage_size = 0;
     BaseType_t ok = pdFALSE;
     uint32_t waited_ms = 0;
 
@@ -579,9 +404,17 @@ static int thread_sync_queue_recv(lua_State *L)
         return thread_sync_push_nil_error(L, "not_found");
     }
 
+    storage_size = thread_sync_queue_storage_size(obj->item_size);
+    item = malloc(storage_size);
+    if (!item) {
+        thread_sync_release(obj);
+        return thread_sync_push_nil_error(L, "no_mem");
+    }
+
     do {
         uint32_t step_ms = 0;
         if (cap_lua_runtime_stop_requested(L)) {
+            free(item);
             thread_sync_release(obj);
             return thread_sync_push_nil_error(L, "stopped");
         }
@@ -589,21 +422,17 @@ static int thread_sync_queue_recv(lua_State *L)
             uint32_t remaining = timeout_ms - waited_ms;
             step_ms = remaining > THREAD_SYNC_WAIT_STEP_MS ? THREAD_SYNC_WAIT_STEP_MS : remaining;
         }
-        ok = xQueueReceive(obj->handle.queue, &payload, thread_sync_ms_to_ticks(step_ms));
+        ok = xQueueReceive(obj->handle.queue, item, thread_sync_ms_to_ticks(step_ms));
         if (ok == pdTRUE) {
-            cJSON *json = cJSON_Parse(payload);
-            cJSON_free(payload);
             thread_sync_release(obj);
-            if (!json) {
-                return luaL_error(L, "thread.sync.queue_recv: invalid JSON payload");
-            }
-            thread_sync_push_json_value(L, json);
-            cJSON_Delete(json);
+            lua_pushlstring(L, (const char *)item->data, item->len);
+            free(item);
             return 1;
         }
         waited_ms += step_ms;
     } while (timeout_ms > waited_ms);
 
+    free(item);
     thread_sync_release(obj);
     return thread_sync_push_nil_error(L, "timeout");
 }

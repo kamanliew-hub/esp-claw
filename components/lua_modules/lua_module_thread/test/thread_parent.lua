@@ -22,9 +22,9 @@ end
 
 cleanup()
 
-assert(sync.queue_create(queue_to_a, { depth = 4, max_bytes = 512 }))
-assert(sync.queue_create(queue_to_b, { depth = 4, max_bytes = 512 }))
-assert(sync.queue_create(queue_to_parent, { depth = 4, max_bytes = 512 }))
+assert(sync.queue_create(queue_to_a, { depth = 4, item_size = 512 }))
+assert(sync.queue_create(queue_to_b, { depth = 4, item_size = 512 }))
+assert(sync.queue_create(queue_to_parent, { depth = 4, item_size = 512 }))
 assert(sync.sem_create(sem_name, { max = 1, initial = 0 }))
 assert(sync.lock_create(lock_name))
 
@@ -52,16 +52,10 @@ local started_b, result_b = thread.start(child_b_path, {
 })
 assert(started_b, result_b)
 
-assert(sync.queue_send(queue_to_a, {
-    from = "parent",
-    to = "child_a",
-    text = "ping",
-}, 5000))
+assert(sync.queue_send(queue_to_a, "parent\0child_a\0ping", 5000))
 
 local ack = assert(sync.queue_recv(queue_to_parent, 5000))
-assert(ack.from == "child_b")
-assert(ack.to == "parent")
-assert(ack.text == "ack")
+assert(ack == "child_b\0parent\0ack")
 
 local function wait_job_done(name)
     local deadline_ms = 5000

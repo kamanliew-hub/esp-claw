@@ -24,14 +24,14 @@ async timeout `0` means run until cancelled. Async `opts` also accepts `name`,
 ### `thread.sync`
 
 - `thread.sync.queue_create(name, opts)` creates a queue. `opts.depth` defaults
-  to `8` and is limited to `1..32`; `opts.max_bytes` defaults to `2048` and is
+  to `8` and is limited to `1..32`; `opts.item_size` defaults to `256` and is
   limited to `1..4096`.
-- `thread.sync.queue_send(name, value, timeout_ms)` sends boolean, number,
-  string, or table values. `nil`, function, thread, and userdata values are not
-  supported.
-- `thread.sync.queue_recv(name, timeout_ms)` returns the received value. It
-  returns `nil, "timeout"` on timeout and `nil, "stopped"` when the Lua job is
-  stopped.
+- `thread.sync.queue_send(name, value, timeout_ms)` sends a Lua string as raw
+  bytes. The string may contain `\0` bytes and must be no larger than the
+  queue's `item_size`.
+- `thread.sync.queue_recv(name, timeout_ms)` returns the received raw byte
+  string. It returns `nil, "timeout"` on timeout and `nil, "stopped"` when the
+  Lua job is stopped.
 - `thread.sync.queue_delete(name)` deletes an idle empty queue. Queues with
   waiters or pending messages return `nil, "busy"`.
 - `thread.sync.sem_create(name, opts)` creates a counting semaphore.
@@ -65,8 +65,8 @@ local ok, output = thread.run("/fatfs/scripts/builtin/test/thread_child_a.lua", 
 assert(ok, output)
 print(output)
 
-thread.sync.queue_create("ui_cmd", { depth = 8, max_bytes = 2048 })
-thread.sync.queue_send("ui_cmd", { cmd = "set_text", text = "hello" }, 1000)
+thread.sync.queue_create("ui_cmd", { depth = 8, item_size = 2048 })
+thread.sync.queue_send("ui_cmd", "set_text\0hello", 1000)
 local msg, err = thread.sync.queue_recv("ui_cmd", 500)
 thread.sync.queue_delete("ui_cmd")
 ```
