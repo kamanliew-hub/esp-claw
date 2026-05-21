@@ -488,6 +488,20 @@ export const SetupWizardPage: Component<SetupWizardPageProps> = (props) => {
   onMount(async () => {
     setLoading(true);
     setError(null);
+
+    {
+      const offsetMin = new Date().getTimezoneOffset();
+      const absH = Math.floor(Math.abs(offsetMin) / 60);
+      const absM = Math.abs(offsetMin) % 60;
+      const sign = offsetMin >= 0 ? '' : '-';
+      const tz = `UTC${sign}${absH}${absM ? ':' + String(absM).padStart(2, '0') : ''}`;
+      saveConfigPatch({ time_timezone: tz })
+        .then(() => patchConfigLocal({ time_timezone: tz }))
+        .catch(() => {
+          console.error('Failed to save time_timezone to config');
+        });
+    }
+
     try {
       await ensureConfigGroups(['llm', 'im', 'search']);
       batch(() => {
