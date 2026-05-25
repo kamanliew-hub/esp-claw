@@ -8,4 +8,3 @@ idf_component_register(
         esp_driver_rmt
 )
 
-idf_component_set_property(${COMPONENT_NAME} WHOLE_ARCHIVE TRUE)
