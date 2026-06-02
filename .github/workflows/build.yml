@@ -19,22 +19,25 @@ jobs:
           target: esp32s3
           path: application/edge_agent
           command: |
+            set -e
             pip install esp-bmgr-assist
             idf.py gen-bmgr-config -c ./boards -b esp32_S3_DevKitC_1_breadboard
             printf 'CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y\nCONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_16MB.csv"\n' >> sdkconfig.defaults
             rm -f sdkconfig
             idf.py reconfigure
+            # 验证分区表是不是16MB版
             idf.py build
 
       - name: Package firmware binaries
         run: |
-          mkdir -p release
-          cp build/bootloader/bootloader.bin release/
-          cp build/partition_table/partition-table.bin release/
-          cp build/edge_agent.bin release/
-          cp build/flash_args release/
-          cp build/ota_data_initial.bin release/
-          cd release && zip -j esp-claw-esp32s3-firmware.zip *
+          cd application/edge_agent
+          mkdir -p $GITHUB_WORKSPACE/release
+          cp build/bootloader/bootloader.bin $GITHUB_WORKSPACE/release/
+          cp build/partition_table/partition-table.bin $GITHUB_WORKSPACE/release/
+          cp build/edge_agent.bin $GITHUB_WORKSPACE/release/
+          cp build/flash_args $GITHUB_WORKSPACE/release/
+          cp build/ota_data_initial.bin $GITHUB_WORKSPACE/release/
+          cd $GITHUB_WORKSPACE/release && zip -j esp-claw-esp32s3-firmware.zip *
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
