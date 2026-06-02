@@ -3,9 +3,7 @@ name: Build ESP-Claw Firmware
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:          # 支持手动触发
+  workflow_dispatch:          # 手动触发
 
 jobs:
   build:
@@ -32,13 +30,28 @@ jobs:
           target: esp32s3
           path: application/basic_demo
 
-      - name: Upload firmware artifacts
-        uses: actions/upload-artifact@v4
+      - name: Package firmware binaries
+        run: |
+          mkdir -p release
+          cp application/basic_demo/build/bootloader/bootloader.bin release/
+          cp application/basic_demo/build/partition_table/partition-table.bin release/
+          cp application/basic_demo/build/esp-claw.bin release/
+          cp application/basic_demo/build/flash_args release/
+          cp application/basic_demo/build/ota_data_initial.bin release/
+          cd release
+          zip -j esp-claw-esp32s3-firmware.zip *
+
+      - name: Create Release and upload assets
+        uses: softprops/action-gh-release@v2
         with:
-          name: esp-claw-firmware-esp32s3
-          path: |
-            application/basic_demo/build/bootloader/bootloader.bin
-            application/basic_demo/build/partition_table/partition-table.bin
-            application/basic_demo/build/esp-claw.bin
-            application/basic_demo/build/flash_args
-            application/basic_demo/build/ota_data_initial.bin
+          tag_name: build-${{ github.run_number }}
+          name: "ESP-Claw Firmware v${{ github.run_number }}"
+          body: |
+            ✅ 自动编译完成
+            
+            - 仓库: espressif/esp-claw
+            - 开发板: esp32_S3_DevKitC_1
+            - 芯片: ESP32-S3
+            - 构建时间: ${{ github.server_time }}
+          files: release/esp-claw-esp32s3-firmware.zip
+          make_latest: true
