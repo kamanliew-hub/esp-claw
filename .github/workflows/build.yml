@@ -2,7 +2,7 @@ name: Build ESP-Claw Firmware
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main" ]          # 你的仓库默认分支，保持原样
   workflow_dispatch:
 
 jobs:
@@ -10,18 +10,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout ESP-Claw repo
+      - name: Checkout ESP-Claw upstream repo
         uses: actions/checkout@v4
         with:
           repository: espressif/esp-claw
-          ref: master  # ← 改这里：main → master
+          ref: master                        # ✅ 上游分支是 master
 
       - name: Build firmware with ESP-IDF v5.5.4
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v5.5.4
           target: esp32s3
-          path: application/basic_demo
+          path: application/edge_agent       # ✅ 正确路径
           command: |
             pip install esp-bmgr-assist &&
             idf.py gen-bmgr-config -c ./boards -b esp32_S3_DevKitC_1 &&
@@ -30,11 +30,11 @@ jobs:
       - name: Package firmware binaries
         run: |
           mkdir -p release
-          cp application/basic_demo/build/bootloader/bootloader.bin release/
-          cp application/basic_demo/build/partition_table/partition-table.bin release/
-          cp application/basic_demo/build/esp-claw.bin release/
-          cp application/basic_demo/build/flash_args release/
-          cp application/basic_demo/build/ota_data_initial.bin release/
+          cp application/edge_agent/build/bootloader/bootloader.bin release/
+          cp application/edge_agent/build/partition_table/partition-table.bin release/
+          cp application/edge_agent/build/edge_agent.bin release/         # ✅ 正确二进制名
+          cp application/edge_agent/build/flash_args release/
+          cp application/edge_agent/build/ota_data_initial.bin release/
           cd release && zip -j esp-claw-esp32s3-firmware.zip *
 
       - name: Create Release and upload assets
