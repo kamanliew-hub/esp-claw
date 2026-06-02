@@ -14,14 +14,14 @@ jobs:
         run: |
           git clone --depth 1 --branch master \
             https://github.com/espressif/esp-claw.git \
-            $GITHUB_WORKSPACE
+            $GITHUB_WORKSPACE/source
 
       - name: Build firmware with ESP-IDF v5.5.4
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v5.5.4
           target: esp32s3
-          path: application/edge_agent
+          path: $GITHUB_WORKSPACE/source/application/edge_agent
           command: |
             pip install esp-bmgr-assist &&
             idf.py gen-bmgr-config -c ./boards -b esp32_S3_DevKitC_1 &&
@@ -29,13 +29,13 @@ jobs:
 
       - name: Package firmware binaries
         run: |
-          mkdir -p release
-          cp build/bootloader/bootloader.bin release/
-          cp build/partition_table/partition-table.bin release/
-          cp build/edge_agent.bin release/
-          cp build/flash_args release/
-          cp build/ota_data_initial.bin release/
-          cd release && zip -j esp-claw-esp32s3-firmware.zip *
+          mkdir -p $GITHUB_WORKSPACE/release
+          cp $GITHUB_WORKSPACE/source/application/edge_agent/build/bootloader/bootloader.bin $GITHUB_WORKSPACE/release/
+          cp $GITHUB_WORKSPACE/source/application/edge_agent/build/partition_table/partition-table.bin $GITHUB_WORKSPACE/release/
+          cp $GITHUB_WORKSPACE/source/application/edge_agent/build/edge_agent.bin $GITHUB_WORKSPACE/release/
+          cp $GITHUB_WORKSPACE/source/application/edge_agent/build/flash_args $GITHUB_WORKSPACE/release/
+          cp $GITHUB_WORKSPACE/source/application/edge_agent/build/ota_data_initial.bin $GITHUB_WORKSPACE/release/
+          cd $GITHUB_WORKSPACE/release && zip -j esp-claw-esp32s3-firmware.zip *
 
       - name: Create Release and upload assets
         uses: softprops/action-gh-release@v2
@@ -43,5 +43,5 @@ jobs:
           tag_name: build-${{ github.run_number }}
           name: "ESP-Claw Firmware v${{ github.run_number }}"
           body: "✅ 自动编译完成\n- 开发板: esp32_S3_DevKitC_1\n- 芯片: ESP32-S3"
-          files: release/esp-claw-esp32s3-firmware.zip
+          files: ${{ github.workspace }}/release/esp-claw-esp32s3-firmware.zip
           make_latest: true
