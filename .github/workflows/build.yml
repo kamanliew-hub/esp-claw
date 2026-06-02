@@ -1,4 +1,3 @@
-```yaml
 name: Build ESP-Claw Firmware
 
 on:
@@ -43,4 +42,3 @@ jobs:
             application/basic_demo/build/esp-claw.bin
             application/basic_demo/build/flash_args
             application/basic_demo/build/ota_data_initial.bin
-```
