@@ -10,14 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Remove any leftover git state
-        run: rm -rf $GITHUB_WORKSPACE/.git $GITHUB_WORKSPACE/* || true
-
-      - name: Clone ESP-Claw upstream (master branch)
-        run: |
-          git clone --depth 1 --branch master \
-            https://github.com/espressif/esp-claw.git \
-            $GITHUB_WORKSPACE/
+      - uses: actions/checkout@v4
 
       - name: Build firmware
         uses: espressif/esp-idf-ci-action@v1
@@ -45,6 +38,6 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: "ESP-Claw Firmware v${{ github.run_number }}"
-          body: "✅ 自动编译完成\n- 开发板: esp32_S3_DevKitC_1\n- 芯片: ESP32-S3"
+          body: "✅ 自动编译完成\n- 开发板: esp32_S3_DevKitC_1_breadboard_N16R8\n- 芯片: ESP32-S3 (16MB Flash + 8MB PSRAM)"
           files: release/esp-claw-esp32s3-firmware.zip
           make_latest: true
