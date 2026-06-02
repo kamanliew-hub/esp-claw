@@ -3,7 +3,7 @@ name: Build ESP-Claw Firmware
 on:
   push:
     branches: [ "main" ]
-  workflow_dispatch:          # 手动触发
+  workflow_dispatch:
 
 jobs:
   build:
@@ -16,19 +16,16 @@ jobs:
           repository: espressif/esp-claw
           ref: main
 
-      - name: Install esp-bmgr-assist
-        run: pip install esp-bmgr-assist
-
-      - name: Select board and generate config
-        working-directory: application/basic_demo
-        run: idf.py gen-bmgr-config -c ./boards -b esp32_S3_DevKitC_1
-
       - name: Build firmware with ESP-IDF v5.5.4
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v5.5.4
           target: esp32s3
           path: application/basic_demo
+          command: |
+            pip install esp-bmgr-assist &&
+            idf.py gen-bmgr-config -c ./boards -b esp32_S3_DevKitC_1 &&
+            idf.py build
 
       - name: Package firmware binaries
         run: |
@@ -38,20 +35,13 @@ jobs:
           cp application/basic_demo/build/esp-claw.bin release/
           cp application/basic_demo/build/flash_args release/
           cp application/basic_demo/build/ota_data_initial.bin release/
-          cd release
-          zip -j esp-claw-esp32s3-firmware.zip *
+          cd release && zip -j esp-claw-esp32s3-firmware.zip *
 
       - name: Create Release and upload assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
           name: "ESP-Claw Firmware v${{ github.run_number }}"
-          body: |
-            ✅ 自动编译完成
-            
-            - 仓库: espressif/esp-claw
-            - 开发板: esp32_S3_DevKitC_1
-            - 芯片: ESP32-S3
-            - 构建时间: ${{ github.server_time }}
+          body: "✅ 自动编译完成\n- 开发板: esp32_S3_DevKitC_1\n- 芯片: ESP32-S3"
           files: release/esp-claw-esp32s3-firmware.zip
           make_latest: true
