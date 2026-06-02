@@ -14,14 +14,14 @@ jobs:
         run: |
           git clone --depth 1 --branch master \
             https://github.com/espressif/esp-claw.git \
-            /home/runner/work/esp-claw/esp-claw
+            $GITHUB_WORKSPACE
 
       - name: Build firmware with ESP-IDF v5.5.4
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v5.5.4
           target: esp32s3
-          path: /home/runner/work/esp-claw/esp-claw/application/edge_agent
+          path: application/edge_agent
           command: |
             pip install esp-bmgr-assist &&
             idf.py gen-bmgr-config -c ./boards -b esp32_S3_DevKitC_1 &&
@@ -30,11 +30,11 @@ jobs:
       - name: Package firmware binaries
         run: |
           mkdir -p release
-          cp /home/runner/work/esp-claw/esp-claw/application/edge_agent/build/bootloader/bootloader.bin release/
-          cp /home/runner/work/esp-claw/esp-claw/application/edge_agent/build/partition_table/partition-table.bin release/
-          cp /home/runner/work/esp-claw/esp-claw/application/edge_agent/build/edge_agent.bin release/
-          cp /home/runner/work/esp-claw/esp-claw/application/edge_agent/build/flash_args release/
-          cp /home/runner/work/esp-claw/esp-claw/application/edge_agent/build/ota_data_initial.bin release/
+          cp build/bootloader/bootloader.bin release/
+          cp build/partition_table/partition-table.bin release/
+          cp build/edge_agent.bin release/
+          cp build/flash_args release/
+          cp build/ota_data_initial.bin release/
           cd release && zip -j esp-claw-esp32s3-firmware.zip *
 
       - name: Create Release and upload assets
