@@ -1,0 +1,46 @@
+```yaml
+name: Build ESP-Claw Firmware
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:          # 支持手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout ESP-Claw repo
+        uses: actions/checkout@v4
+        with:
+          repository: espressif/esp-claw
+          ref: main
+
+      - name: Install esp-bmgr-assist
+        run: pip install esp-bmgr-assist
+
+      - name: Select board and generate config
+        working-directory: application/basic_demo
+        run: idf.py gen-bmgr-config -c ./boards -b esp32_S3_DevKitC_1
+
+      - name: Build firmware with ESP-IDF v5.5.4
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5.4
+          target: esp32s3
+          path: application/basic_demo
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp-claw-firmware-esp32s3
+          path: |
+            application/basic_demo/build/bootloader/bootloader.bin
+            application/basic_demo/build/partition_table/partition-table.bin
+            application/basic_demo/build/esp-claw.bin
+            application/basic_demo/build/flash_args
+            application/basic_demo/build/ota_data_initial.bin
+```
