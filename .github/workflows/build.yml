@@ -26,10 +26,8 @@ jobs:
           target: esp32s3
           path: application/edge_agent
           command: |
-            pip install esp-bmgr-assist &&
-            sed -i 's/CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y/CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y/' boards/espressif/esp32_S3_DevKitC_1_breadboard/sdkconfig.defaults.board &&
-            sed -i 's|CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_8MB.csv"|CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_16MB.csv"|' application/edge_agent/sdkconfig.defaults &&
-            idf.py gen-bmgr-config -c ./boards -b esp32_S3_DevKitC_1_breadboard &&
+            pip install esp-bmgr-assist
+            idf.py gen-bmgr-config -c ./boards -b esp32_S3_DevKitC_1_breadboard_N16R8
             idf.py build
 
       - name: Package firmware binaries
