@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build firmware
         uses: espressif/esp-idf-ci-action@v1
@@ -43,7 +43,7 @@ jobs:
           cd $GITHUB_WORKSPACE/release && zip -j esp-claw-esp32s3-firmware.zip *
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: build-${{ github.run_number }}
           name: "ESP-Claw Firmware v${{ github.run_number }}"
