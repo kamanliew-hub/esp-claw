@@ -42,9 +42,6 @@
 #if CONFIG_APP_CLAW_CAP_MCP_CLIENT
 #include "cap_mcp_client.h"
 #endif
-#if CONFIG_APP_CLAW_CAP_MCP_SERVER
-#include "cap_mcp_server.h"
-#endif
 #if CONFIG_APP_CLAW_CAP_ROUTER_MGR
 #include "cap_router_mgr.h"
 #endif
@@ -60,9 +57,6 @@
 #if CONFIG_APP_CLAW_CAP_SYSTEM
 #include "cap_system.h"
 #endif
-#if CONFIG_APP_CLAW_CAP_TIME
-#include "cap_time.h"
-#endif
 #if CONFIG_APP_CLAW_CAP_HTTP_REQUEST
 #include "cap_http_request.h"
 #endif
@@ -70,7 +64,9 @@
 #include "cap_web_search.h"
 #endif
 #include "claw_cap.h"
+#if CONFIG_APP_CLAW_CAP_MEMORY
 #include "claw_memory.h"
+#endif
 #include "claw_paths.h"
 #include "esp_check.h"
 #include "esp_log.h"
@@ -451,16 +447,6 @@ static esp_err_t app_cap_register_mcp_client(const app_claw_config_t *config,
 }
 #endif
 
-#if CONFIG_APP_CLAW_CAP_MCP_SERVER
-static esp_err_t app_cap_register_mcp_server(const app_claw_config_t *config,
-                                             const app_claw_storage_paths_t *paths)
-{
-    (void)config;
-    (void)paths;
-    return cap_mcp_server_register_group();
-}
-#endif
-
 #if CONFIG_APP_CLAW_CAP_SKILL_MGR
 static esp_err_t app_cap_register_skill_mgr(const app_claw_config_t *config,
                                             const app_claw_storage_paths_t *paths)
@@ -480,23 +466,13 @@ static esp_err_t app_cap_register_system(const app_claw_config_t *config,
 }
 #endif
 
-#if CONFIG_APP_CLAW_MEMORY_MODE_FULL
+#if CONFIG_APP_CLAW_CAP_MEMORY && CONFIG_APP_CLAW_MEMORY_MODE_FULL
 static esp_err_t app_cap_register_memory(const app_claw_config_t *config,
                                          const app_claw_storage_paths_t *paths)
 {
     (void)config;
     (void)paths;
     return claw_memory_register_group();
-}
-#endif
-
-#if CONFIG_APP_CLAW_CAP_TIME
-static esp_err_t app_cap_register_time(const app_claw_config_t *config,
-                                       const app_claw_storage_paths_t *paths)
-{
-    (void)config;
-    (void)paths;
-    return cap_time_register_group();
 }
 #endif
 
@@ -619,20 +595,14 @@ static const app_capability_group_entry_t s_capability_group_entries[] = {
 #if CONFIG_APP_CLAW_CAP_MCP_CLIENT
     { "cap_mcp_client", "MCP Client", "Register MCP client cap", false, NULL, app_cap_register_mcp_client },
 #endif
-#if CONFIG_APP_CLAW_CAP_MCP_SERVER
-    { "cap_mcp_server", "MCP Server", "Register MCP server cap", false, NULL, app_cap_register_mcp_server },
-#endif
 #if CONFIG_APP_CLAW_CAP_SKILL_MGR
     { "cap_skill", "Skill Manager", "Register skill cap", true, NULL, app_cap_register_skill_mgr },
 #endif
 #if CONFIG_APP_CLAW_CAP_SYSTEM
-    { "cap_system", "System", "Register system cap", false, NULL, app_cap_register_system },
+    { "cap_system", "System", "Register system cap", true, NULL, app_cap_register_system },
 #endif
-#if CONFIG_APP_CLAW_MEMORY_MODE_FULL
+#if CONFIG_APP_CLAW_CAP_MEMORY && CONFIG_APP_CLAW_MEMORY_MODE_FULL
     { "claw_memory", "Memory", "Register claw_memory group", true, NULL, app_cap_register_memory },
-#endif
-#if CONFIG_APP_CLAW_CAP_TIME
-    { "cap_time", "Time", "Register time cap", false, NULL, app_cap_register_time },
 #endif
 #if CONFIG_APP_CLAW_CAP_LLM_INSPECT
     { "cap_llm_inspect", "LLM Inspect", "Register LLM inspect cap", true, NULL, app_cap_register_llm_inspect },
@@ -682,20 +652,14 @@ static const app_capability_group_info_t s_capability_group_infos[] = {
 #if CONFIG_APP_CLAW_CAP_MCP_CLIENT
     { "cap_mcp_client", "MCP Client", false },
 #endif
-#if CONFIG_APP_CLAW_CAP_MCP_SERVER
-    { "cap_mcp_server", "MCP Server", false },
-#endif
 #if CONFIG_APP_CLAW_CAP_SKILL_MGR
     { "cap_skill", "Skill Manager", true },
 #endif
 #if CONFIG_APP_CLAW_CAP_SYSTEM
     { "cap_system", "System", true },
 #endif
-#if CONFIG_APP_CLAW_MEMORY_MODE_FULL
+#if CONFIG_APP_CLAW_CAP_MEMORY && CONFIG_APP_CLAW_MEMORY_MODE_FULL
     { "claw_memory", "Memory", true },
-#endif
-#if CONFIG_APP_CLAW_CAP_TIME
-    { "cap_time", "Time", false },
 #endif
 #if CONFIG_APP_CLAW_CAP_LLM_INSPECT
     { "cap_llm_inspect", "LLM Inspect", false },

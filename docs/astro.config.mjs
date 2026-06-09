@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 
 import starlightThemeNova from "starlight-theme-nova";
 import astroD2 from "astro-d2";
+import { unified } from "@astrojs/markdown-remark";
 import { remarkDocLinks } from "./src/plugins/remark-doc-links.ts";
 
 const BASE = "/";
@@ -83,6 +84,7 @@ export default defineConfig({
                 { slug: "reference-cap/implement-capability" },
                 { slug: "reference-cap/cap-im-platform" },
                 { slug: "reference-cap/cap-skill" },
+                { slug: "reference-cap/cap-agent-mgr" },
                 { slug: "reference-cap/cap-llm-inspect" },
                 { slug: "reference-cap/cap-files" },
                 { slug: "reference-cap/cap-system" },
@@ -124,7 +126,10 @@ export default defineConfig({
     }),
   ],
   markdown: {
-    remarkPlugins: [[remarkDocLinks, { base: BASE }]],
+    gfm: true,
+    processor: unified({
+      remarkPlugins: [[remarkDocLinks, { base: BASE }]],
+    }),
   },
   vite: {
     resolve: {
