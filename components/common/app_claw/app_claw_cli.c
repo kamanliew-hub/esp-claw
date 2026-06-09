@@ -39,9 +39,6 @@
 #if CONFIG_APP_CLAW_CAP_SKILL_MGR
 #include "cmd_cap_skill.h"
 #endif
-#if CONFIG_APP_CLAW_CAP_TIME
-#include "cmd_cap_time.h"
-#endif
 #if CONFIG_APP_CLAW_CAP_WEB_SEARCH
 #include "cmd_cap_web_search.h"
 #endif
@@ -724,9 +721,6 @@ static void register_cap_cli_commands(void)
 #endif
 #if CONFIG_APP_CLAW_CAP_SKILL_MGR
     register_cap_skill();
-#endif
-#if CONFIG_APP_CLAW_CAP_TIME
-    register_cap_time();
 #endif
 #if CONFIG_APP_CLAW_CAP_WEB_SEARCH
     register_cap_web_search();

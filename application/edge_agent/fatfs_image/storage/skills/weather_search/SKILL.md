@@ -4,7 +4,7 @@
   "description": "How to answer current weather, temperature, and forecast queries through direct web search capabilities.",
   "metadata": {
     "cap_groups": [
-      "cap_time",
+      "cap_system",
       "cap_web_search"
     ],
     "manage_mode": "readonly"

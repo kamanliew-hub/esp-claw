@@ -18,6 +18,9 @@
 #if CONFIG_APP_CLAW_CAP_SCHEDULER
 #include "cap_scheduler.h"
 #endif
+#if CONFIG_APP_CLAW_CAP_SYSTEM
+#include "cap_system.h"
+#endif
 #if CONFIG_APP_CLAW_CAP_SESSION_MGR
 #include "cap_session_mgr.h"
 #endif
@@ -42,9 +45,6 @@
 #include "freertos/task.h"
 #if CONFIG_APP_CLAW_CAP_LUA
 #include "cap_lua.h"
-#endif
-#if CONFIG_APP_CLAW_CAP_TIME
-#include "cap_time.h"
 #endif
 
 static const char *TAG = "app_claw";
@@ -244,7 +244,7 @@ static bool app_llm_is_configured(const app_claw_config_t *config)
            config->llm_backend_type[0];
 }
 
-#if CONFIG_APP_CLAW_CAP_SCHEDULER && CONFIG_APP_CLAW_CAP_TIME
+#if CONFIG_APP_CLAW_CAP_SCHEDULER && CONFIG_APP_CLAW_CAP_SYSTEM
 static void app_time_sync_success(bool had_valid_time, void *ctx)
 {
     (void)ctx;
@@ -457,8 +457,8 @@ esp_err_t app_claw_start(const app_claw_config_t *config)
     ESP_RETURN_ON_ERROR(cap_scheduler_start(), TAG, "Failed to start scheduler");
 #endif
 
-#if CONFIG_APP_CLAW_CAP_TIME
-    ESP_ERROR_CHECK(cap_time_sync_service_start(&(cap_time_sync_service_config_t) {
+#if CONFIG_APP_CLAW_CAP_SYSTEM
+    ESP_ERROR_CHECK(cap_system_time_sync_service_start(&(cap_system_time_sync_service_config_t) {
                         .network_ready = NULL,
 #if CONFIG_APP_CLAW_CAP_SCHEDULER
                         .on_sync_success = app_time_sync_success,

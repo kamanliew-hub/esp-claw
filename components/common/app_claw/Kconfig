@@ -149,13 +149,6 @@ menu "App Claw Config"
                 Enable the system capability and keep app_claw's direct dependency
                 on cap_system.
 
-        config APP_CLAW_CAP_TIME
-            bool "Enable time capability"
-            default y
-            help
-                Enable the time capability and keep app_claw's direct dependency
-                on cap_time.
-
         config APP_CLAW_CAP_LLM_INSPECT
             bool "Enable LLM inspect capability"
             default y
