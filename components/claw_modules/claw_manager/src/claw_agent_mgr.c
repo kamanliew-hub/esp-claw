@@ -738,9 +738,13 @@ static void claw_agent_mgr_completion_observer(const claw_core_completion_summar
     if ((size_t)written >= sizeof(text)) {
         size_t suffix_len = strlen(truncated_suffix);
         if (suffix_len + 1U < sizeof(text)) {
-            strlcpy(text + sizeof(text) - suffix_len - 1U,
-                    truncated_suffix,
-                    suffix_len + 1U);
+            size_t p = sizeof(text) - suffix_len - 1U;
+            /* Back off so the suffix never splices into the middle of a
+             * multi-byte UTF-8 sequence, which would emit invalid bytes. */
+            while (p > 0 && ((unsigned char)text[p] & 0xC0) == 0x80) {
+                p--;
+            }
+            strlcpy(text + p, truncated_suffix, sizeof(text) - p);
         }
     }
 

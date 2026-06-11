@@ -18,6 +18,8 @@
 
 #include "claw_core.h"
 #include "claw_core_llm.h"
+#include "claw_utils_string.h"
+#include "claw_utils_time.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -124,8 +126,6 @@ struct claw_core_state {
 
 typedef struct claw_core_state claw_core_state_t;
 
-char *claw_core_dup_string(const char *src);
-char *claw_core_dup_printf(const char *fmt, ...);
 const char *claw_core_log_snippet(const char *text);
 int claw_core_log_snippet_len(const char *text);
 const char *claw_core_log_snippet_suffix(const char *text);
@@ -136,7 +136,6 @@ esp_err_t claw_core_append_tool_summary_line(char *summary,
                                              bool ok);
 void claw_core_obs_csv_append(char *csv, size_t csv_size, const char *name, bool dedup);
 void claw_core_log_tool_call_names(uint32_t request_id, const claw_core_llm_response_t *response);
-int64_t claw_core_now_ms(void);
 void claw_core_check_timezone(void);
 void claw_core_llm_config_free(claw_core_llm_config_t *config);
 esp_err_t claw_core_llm_config_copy(claw_core_llm_config_t *dst,

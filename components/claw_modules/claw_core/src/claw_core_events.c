@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "claw_utils_string.h"
 #include "claw_event_publisher.h"
 #include "esp_log.h"
 #include "sdkconfig.h"
@@ -17,45 +18,6 @@
 static const char *TAG = "claw_core";
 
 #define CLAW_CORE_STAGE_REASONING_SNIPPET_LEN 150
-
-static size_t utf8_prefix_len(const char *text, size_t max_bytes)
-{
-    const unsigned char *p = (const unsigned char *)text;
-    size_t off = 0;
-
-    if (!text) {
-        return 0;
-    }
-
-    while (p[off] && off < max_bytes) {
-        size_t char_len = 1;
-        unsigned char ch = p[off];
-
-        if ((ch & 0x80) == 0) {
-            char_len = 1;
-        } else if ((ch & 0xE0) == 0xC0) {
-            char_len = 2;
-        } else if ((ch & 0xF0) == 0xE0) {
-            char_len = 3;
-        } else if ((ch & 0xF8) == 0xF0) {
-            char_len = 4;
-        } else {
-            break;
-        }
-
-        if (off + char_len > max_bytes) {
-            break;
-        }
-        for (size_t i = 1; i < char_len; i++) {
-            if ((p[off + i] & 0xC0) != 0x80) {
-                return off;
-            }
-        }
-        off += char_len;
-    }
-
-    return off;
-}
 
 static esp_err_t build_response_payload_json(const claw_core_request_t *request,
                                              const claw_core_response_t *response,
@@ -154,7 +116,7 @@ static esp_err_t build_agent_out_message_event(const claw_core_request_t *reques
         return err;
     }
 
-    now_ms = claw_core_now_ms();
+    now_ms = claw_utils_time_now_ms();
     channel = (response->target_channel && response->target_channel[0]) ?
               response->target_channel : request->source_channel;
     chat_id = (response->target_chat_id && response->target_chat_id[0]) ?
@@ -233,7 +195,7 @@ esp_err_t claw_core_publish_stage_text(const claw_core_request_t *request, const
         return ESP_OK;
     }
 
-    now_ms = claw_core_now_ms();
+    now_ms = claw_utils_time_now_ms();
     err = build_out_message_event_common(
         "stage",
         "agent_stage",
@@ -273,8 +235,8 @@ void claw_core_publish_stage_tool_calls(const claw_core_request_t *request,
 
     if (response->reasoning_content && response->reasoning_content[0]) {
         size_t reasoning_len = strlen(response->reasoning_content);
-        size_t prefix_len = utf8_prefix_len(response->reasoning_content,
-                                            CLAW_CORE_STAGE_REASONING_SNIPPET_LEN);
+        size_t prefix_len = claw_utils_utf8_prefix_len(response->reasoning_content,
+                                                 CLAW_CORE_STAGE_REASONING_SNIPPET_LEN);
 
         written = snprintf(buf, sizeof(buf), "🦞 [Round %" PRIu32 "] %.*s%s",
                            iteration + 1,
@@ -302,9 +264,11 @@ void claw_core_publish_stage_tool_calls(const claw_core_request_t *request,
         const char *name = response->tool_calls[i].name ? response->tool_calls[i].name : "?";
         const char *args = response->tool_calls[i].arguments_json;
         if (args && args[0]) {
-            written = snprintf(buf + off, sizeof(buf) - off, "%s%s(%.40s%s)",
-                               i == 0 ? "" : ", ", name, args,
-                               strlen(args) > 40 ? "..." : "");
+            size_t arg_len = strlen(args);
+            size_t prefix_len = claw_utils_utf8_prefix_len(args, 40);
+            written = snprintf(buf + off, sizeof(buf) - off, "%s%s(%.*s%s)",
+                               i == 0 ? "" : ", ", name, (int)prefix_len, args,
+                               arg_len > prefix_len ? "..." : "");
         } else {
             written = snprintf(buf + off, sizeof(buf) - off, "%s%s",
                                i == 0 ? "" : ", ", name);

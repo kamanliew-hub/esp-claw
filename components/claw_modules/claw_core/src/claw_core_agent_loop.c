@@ -144,13 +144,13 @@ void claw_core_agent_loop_task(void *arg)
         response.view.request_id = request.view.request_id;
         response.view.status = CLAW_CORE_RESPONSE_STATUS_ERROR;
         response.view.completion_type = CLAW_CORE_COMPLETION_DONE;
-        response.view.target_channel = claw_core_dup_string(request.view.target_channel);
-        response.view.target_chat_id = claw_core_dup_string(request.view.target_chat_id);
+        response.view.target_channel = claw_utils_string_dup(request.view.target_channel);
+        response.view.target_chat_id = claw_utils_string_dup(request.view.target_chat_id);
         if ((request.view.target_channel && request.view.target_channel[0] &&
                 !response.view.target_channel) ||
                 (request.view.target_chat_id && request.view.target_chat_id[0] &&
                  !response.view.target_chat_id)) {
-            response.view.error_message = claw_core_dup_string("Failed to allocate response target");
+            response.view.error_message = claw_utils_string_dup("Failed to allocate response target");
             goto finish_request;
         }
         {
@@ -180,16 +180,16 @@ void claw_core_agent_loop_task(void *arg)
             if (gate_err != ESP_OK) {
                 if (reject_message[0]) {
                     response.view.status = CLAW_CORE_RESPONSE_STATUS_OK;
-                    response.view.text = claw_core_dup_string(reject_message);
+                    response.view.text = claw_utils_string_dup(reject_message);
                     if (!response.view.text) {
                         response.view.status = CLAW_CORE_RESPONSE_STATUS_ERROR;
-                        response.view.error_message = claw_core_dup_string("Failed to allocate reject message");
+                        response.view.error_message = claw_utils_string_dup("Failed to allocate reject message");
                         err = ESP_ERR_NO_MEM;
                     } else {
                         err = ESP_OK;
                     }
                 } else {
-                    response.view.error_message = claw_core_dup_string(esp_err_to_name(gate_err));
+                    response.view.error_message = claw_utils_string_dup(esp_err_to_name(gate_err));
                     err = gate_err;
                 }
                 goto finish_request;
@@ -221,7 +221,7 @@ void claw_core_agent_loop_task(void *arg)
 
         runtime_messages = cJSON_CreateArray();
         if (!runtime_messages) {
-            response.view.error_message = claw_core_dup_string("Failed to allocate runtime messages");
+            response.view.error_message = claw_utils_string_dup("Failed to allocate runtime messages");
             goto finish_request;
         }
 
@@ -230,7 +230,7 @@ void claw_core_agent_loop_task(void *arg)
                                                             &request_start_contexts,
                                                             &request_start_context_count);
         if (err != ESP_OK) {
-            response.view.error_message = claw_core_dup_string(esp_err_to_name(err));
+            response.view.error_message = claw_utils_string_dup(esp_err_to_name(err));
             goto finish_request;
         }
         if (original_user_persisted &&
@@ -257,7 +257,7 @@ void claw_core_agent_loop_task(void *arg)
                                                      &runtime_messages,
                                                      &drained);
                 if (err != ESP_OK) {
-                    response.view.error_message = claw_core_dup_string(esp_err_to_name(err));
+                    response.view.error_message = claw_utils_string_dup(esp_err_to_name(err));
                     goto finish_request;
                 }
                 if (drained) {
@@ -278,7 +278,7 @@ void claw_core_agent_loop_task(void *arg)
                                                     obs_providers_csv,
                                                     sizeof(obs_providers_csv));
             if (err != ESP_OK) {
-                response.view.error_message = claw_core_dup_string(esp_err_to_name(err));
+                response.view.error_message = claw_utils_string_dup(esp_err_to_name(err));
                 goto finish_request;
             }
 
@@ -292,7 +292,7 @@ void claw_core_agent_loop_task(void *arg)
                                                      &runtime_messages,
                                                      &drained);
                 if (err != ESP_OK) {
-                    response.view.error_message = claw_core_dup_string(esp_err_to_name(err));
+                    response.view.error_message = claw_utils_string_dup(esp_err_to_name(err));
                     goto finish_request;
                 }
                 if (drained) {
@@ -319,7 +319,7 @@ void claw_core_agent_loop_task(void *arg)
                                                          &runtime_messages,
                                                          &drained);
                     if (err != ESP_OK) {
-                        response.view.error_message = claw_core_dup_string(esp_err_to_name(err));
+                        response.view.error_message = claw_utils_string_dup(esp_err_to_name(err));
                         goto finish_request;
                     }
                     if (drained) {
@@ -349,7 +349,7 @@ void claw_core_agent_loop_task(void *arg)
                                                      &runtime_messages,
                                                      &drained);
                 if (err != ESP_OK) {
-                    response.view.error_message = claw_core_dup_string(esp_err_to_name(err));
+                    response.view.error_message = claw_utils_string_dup(esp_err_to_name(err));
                     goto finish_request;
                 }
                 if (drained) {
@@ -372,7 +372,7 @@ void claw_core_agent_loop_task(void *arg)
 
             err = claw_core_append_assistant_tool_calls(runtime_messages, &llm_response);
             if (err != ESP_OK) {
-                response.view.error_message = claw_core_dup_string(esp_err_to_name(err));
+                response.view.error_message = claw_utils_string_dup(esp_err_to_name(err));
                 goto finish_request;
             }
 
@@ -384,7 +384,7 @@ void claw_core_agent_loop_task(void *arg)
                                                          sizeof(tool_summary),
                                                          &tool_results_json);
             if (err != ESP_OK) {
-                response.view.error_message = claw_core_dup_string(esp_err_to_name(err));
+                response.view.error_message = claw_utils_string_dup(esp_err_to_name(err));
                 goto finish_request;
             }
 
@@ -410,7 +410,7 @@ void claw_core_agent_loop_task(void *arg)
 
             iteration++;
             if (iteration >= core->max_tool_iterations) {
-                response.view.error_message = claw_core_dup_string("cap tool iteration limit reached");
+                response.view.error_message = claw_utils_string_dup("cap tool iteration limit reached");
                 err = ESP_ERR_INVALID_STATE;
                 goto finish_request;
             }
@@ -441,7 +441,7 @@ void claw_core_agent_loop_task(void *arg)
                 }
             }
         } else if (!response.view.error_message) {
-            response.view.error_message = claw_core_dup_string(esp_err_to_name(err));
+            response.view.error_message = claw_utils_string_dup(esp_err_to_name(err));
         }
 
 finish_request:
@@ -459,7 +459,7 @@ finish_request:
             if (was_cancelled && err != ESP_OK && response.view.error_message) {
                 /* Replace the generic transport error with a clearer one. */
                 free(response.view.error_message);
-                response.view.error_message = claw_core_dup_string("request cancelled");
+                response.view.error_message = claw_utils_string_dup("request cancelled");
             }
         }
 

@@ -5,6 +5,7 @@
  */
 #include "cap_im_tg.h"
 #include "cap_im_attachment.h"
+#include "claw_utils_string.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -1499,7 +1500,10 @@ esp_err_t cap_im_tg_send_text(const char *chat_id, const char *text)
         esp_err_t err;
 
         if (chunk_len > CAP_IM_TG_MAX_MSG_LEN) {
-            chunk_len = CAP_IM_TG_MAX_MSG_LEN;
+            chunk_len = claw_utils_utf8_prefix_len(text + offset, CAP_IM_TG_MAX_MSG_LEN);
+            if (chunk_len == 0) {
+                return ESP_ERR_INVALID_ARG;
+            }
         }
 
         chunk = calloc(1, chunk_len + 1);

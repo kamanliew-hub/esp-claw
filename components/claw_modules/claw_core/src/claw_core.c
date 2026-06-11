@@ -87,7 +87,7 @@ esp_err_t claw_core_create(const claw_core_config_t *config, claw_core_handle_t 
 
     core->instance_id = config->instance_id;
     snprintf(core->log_tag, sizeof(core->log_tag), "claw_core_agent_%" PRIu32, core->instance_id);
-    core->system_prompt = claw_core_dup_string(config->system_prompt);
+    core->system_prompt = claw_utils_string_dup(config->system_prompt);
     if (!core->system_prompt) {
         claw_core_free_runtime(core);
         return ESP_ERR_NO_MEM;
@@ -304,7 +304,7 @@ esp_err_t claw_core_add_context_provider(claw_core_handle_t core,
     }
 
     slot = &core->context_providers[core->context_provider_count];
-    slot->name = claw_core_dup_string(provider->name);
+    slot->name = claw_utils_string_dup(provider->name);
     if (!slot->name) {
         return ESP_ERR_NO_MEM;
     }

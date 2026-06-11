@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "cap_im_wechat.h"
+#include "claw_utils_string.h"
 
 #include <ctype.h>
 #include <inttypes.h>
@@ -2453,7 +2454,10 @@ esp_err_t cap_im_wechat_send_text(const char *chat_id, const char *text)
         esp_err_t err;
 
         if (chunk_len > CAP_IM_WECHAT_MAX_MSG_LEN) {
-            chunk_len = CAP_IM_WECHAT_MAX_MSG_LEN;
+            chunk_len = claw_utils_utf8_prefix_len(text + offset, CAP_IM_WECHAT_MAX_MSG_LEN);
+            if (chunk_len == 0) {
+                return ESP_ERR_INVALID_ARG;
+            }
         }
 
         chunk = calloc(1, chunk_len + 1);
