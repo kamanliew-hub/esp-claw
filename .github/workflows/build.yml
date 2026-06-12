@@ -23,10 +23,10 @@ jobs:
           path: application/edge_agent
           command: |
             set -e
-            pip install -q esp-bmgr-assist
             pip install --upgrade pip
             pip install --upgrade esptool
-            idf.py gen-bmgr-config -c ./boards -b esp32_S3_DevKitC_1_N16R8_breadboard
+            pip install esp-bmgr-assist
+            idf.py bmgr -c ./boards -b esp32_S3_DevKitC_1_N16R8_breadboard
             idf.py build
 
       - name: Package firmware binaries
