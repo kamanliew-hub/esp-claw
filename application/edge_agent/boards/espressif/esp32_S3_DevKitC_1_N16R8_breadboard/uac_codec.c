@@ -3,581 +3,635 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-#include <string.h>
 #include <stdlib.h>
-#include "sdkconfig.h"
-#include "esp_log.h"
-#include "esp_check.h"
+#include <string.h>
+#include <inttypes.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "usb/usb_host.h"
-#include "usb/uac_host.h"
-#include "esp_video_init.h"
-#include "esp_video_device.h"
-#include "esp_board_manager_includes.h"
-#include "gen_board_device_custom.h"
+#include "esp_check.h"
+#include "esp_log.h"
+#include "esp_codec_dev.h"
 #include "uac_codec.h"
-#include "esp_lcd_panel_st7789.h"
 
+#define UAC_CODEC_BUFFER_SIZE     16000
+#define UAC_CODEC_THRESHOLD_SIZE  4000
+#define UAC_CODEC_DEFAULT_RATE    16000
 
-static const char *TAG = "setup_device";
-
-typedef enum {
-    USB_DEVICE_KIND_CAMERA,
-    USB_DEVICE_KIND_UAC_SPK,
-    USB_DEVICE_KIND_UAC_MIC,
-} usb_device_kind_t;
+static const char *TAG = "uac_codec";
 
 typedef struct {
-    dev_camera_handle_t handle;
-    usb_device_kind_t kind;
-} custom_usb_device_handle_t;
+    audio_codec_if_t base;
+    uac_codec_config_t config;
+    uac_host_device_handle_t dev_handle;
+    esp_codec_dev_sample_info_t fs;
+    esp_codec_dev_type_t dev_type;
+    bool is_open;
+    bool is_data_enabled;
+    bool is_dev_enabled;
+    bool is_enabled;
+    bool stream_started;
+    bool disconnected;
+    int size_per_second;
+} uac_codec_t;
 
 typedef struct {
-    uint8_t addr;
-    uint8_t iface_num;
-    uac_host_driver_event_t event;
-} uac_driver_event_msg_t;
+    audio_codec_data_if_t base;
+    uac_codec_t *codec;
+} uac_codec_data_t;
 
-#define USB_HOST_TASK_PRIORITY      5
-#define USB_HOST_TASK_STACK_SIZE    4096
-#define UAC_TASK_PRIORITY           configMAX_PRIORITIES - 2
-#define UAC_TASK_STACK_SIZE         4096
-#define UAC_EVENT_QUEUE_LEN         8
-#define UAC_CONNECT_TIMEOUT_MS      1500
-#define USB_UVC_DEV_NUM             1
-#define USB_UVC_TASK_PRIORITY       configMAX_PRIORITIES - 2
-#define USB_UVC_TASK_STACK_SIZE     4096
-
-static SemaphoreHandle_t s_usb_lock;
-static TaskHandle_t s_usb_task_handle;
-static int s_usb_ref_count;
-static bool s_usb_stop_requested;
-
-static QueueHandle_t s_uac_event_queue;
-static TaskHandle_t s_uac_task_handle;
-static bool s_uac_installed;
-static int s_uac_ref_count;
-
-static uac_driver_event_msg_t s_spk_dev_info;
-static uac_driver_event_msg_t s_mic_dev_info;
-static bool s_spk_dev_found;
-static bool s_mic_dev_found;
-
-static void usb_lib_task(void *arg)
+static uint8_t clamp_percent(int value)
 {
-    while (true) {
-        uint32_t event_flags = 0;
-
-        if (usb_host_lib_handle_events(portMAX_DELAY, &event_flags) != ESP_OK) {
-            ESP_LOGE(TAG, "USB host event handling failed");
-            break;
-        }
-        if (event_flags & USB_HOST_LIB_EVENT_FLAGS_NO_CLIENTS) {
-            (void)usb_host_device_free_all();
-            if (s_usb_stop_requested) {
-                break;
-            }
-        }
-        if (event_flags & USB_HOST_LIB_EVENT_FLAGS_ALL_FREE) {
-            ESP_LOGI(TAG, "USB host has freed all devices");
-            if (s_usb_stop_requested) {
-                break;
-            }
-        }
+    if (value < 0) {
+        return 0;
     }
-
-    vTaskDelay(pdMS_TO_TICKS(10));
-    esp_err_t ret = usb_host_uninstall();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "failed to uninstall USB host: %s", esp_err_to_name(ret));
-    } else {
-        ESP_LOGI(TAG, "USB host uninstalled");
+    if (value > 100) {
+        return 100;
     }
-    s_usb_task_handle = NULL;
-    vTaskDelete(NULL);
+    return (uint8_t)value;
 }
 
-static esp_err_t shared_usb_host_acquire(void)
+static uint8_t out_db_to_percent(float db)
 {
-    esp_err_t ret = ESP_OK;
-
-    if (s_usb_lock == NULL) {
-        s_usb_lock = xSemaphoreCreateMutex();
-        ESP_RETURN_ON_FALSE(s_usb_lock != NULL, ESP_ERR_NO_MEM, TAG, "failed to create USB lock");
+    if (db <= -96.0f) {
+        return 0;
+    }
+    if (db >= 0.0f) {
+        return 100;
     }
 
-    xSemaphoreTake(s_usb_lock, portMAX_DELAY);
-    if (s_usb_ref_count == 0) {
-        s_usb_stop_requested = false;
+    /* Match esp_codec_dev default output curve: [1, 100] -> [-49.5 dB, 0 dB]. */
+    if (db <= -49.5f) {
+        return 1;
+    }
+    return clamp_percent((int)lroundf(100.0f + db * 2.0f));
+}
 
-        if (s_usb_task_handle == NULL) {
-            const usb_host_config_t host_config = {
-                .skip_phy_setup = false,
-                .intr_flags = ESP_INTR_FLAG_LOWMED,
-            };
+static uint8_t mic_volume_db_to_percent(float db)
+{
+    /* Lua input volume uses 0..100 percent and esp_codec_dev receives the mapped 0..30 dB range. */
+    if (db <= 0.0f) {
+        return 0;
+    }
+    if (db >= 30.0f) {
+        return 100;
+    }
+    return clamp_percent((int)lroundf(db * 100.0f / 30.0f));
+}
 
-            ret = usb_host_install(&host_config);
-            if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-                ESP_LOGE(TAG, "failed to install USB host: %s", esp_err_to_name(ret));
-                goto out;
-            }
-
-            BaseType_t task_ret = xTaskCreatePinnedToCore(usb_lib_task, "usb_host", USB_HOST_TASK_STACK_SIZE,
-                                                          NULL, USB_HOST_TASK_PRIORITY, &s_usb_task_handle, 0);
-            if (task_ret != pdTRUE) {
-                if (ret == ESP_OK) {
-                    (void)usb_host_uninstall();
-                }
-                ret = ESP_ERR_NO_MEM;
-                goto out;
-            }
-            ESP_LOGI(TAG, "USB host installed");
+static uint32_t select_uac_sample_rate(const uac_host_dev_alt_param_t *alt_param, uint32_t preferred_rate)
+{
+    if (preferred_rate == 0) {
+        preferred_rate = UAC_CODEC_DEFAULT_RATE;
+    }
+    if (alt_param->sample_freq_type == 0) {
+        if (preferred_rate >= alt_param->sample_freq_lower && preferred_rate <= alt_param->sample_freq_upper) {
+            return preferred_rate;
+        }
+        return alt_param->sample_freq_lower;
+    }
+    for (int i = 0; i < alt_param->sample_freq_type && i < UAC_FREQ_NUM_MAX; i++) {
+        if (alt_param->sample_freq[i] == preferred_rate) {
+            return preferred_rate;
         }
     }
-
-    s_usb_ref_count++;
-out:
-    xSemaphoreGive(s_usb_lock);
-    return ret;
+    return alt_param->sample_freq[0];
 }
 
-static esp_err_t shared_usb_host_release(void)
+static void uac_codec_device_callback(uac_host_device_handle_t uac_device_handle,
+                                      const uac_host_device_event_t event, void *arg)
 {
-    if (s_usb_lock == NULL) {
-        return ESP_OK;
-    }
+    uac_codec_t *codec = (uac_codec_t *)arg;
 
-    xSemaphoreTake(s_usb_lock, portMAX_DELAY);
-    if (s_usb_ref_count > 0) {
-        s_usb_ref_count--;
-    }
-    if (s_usb_ref_count == 0) {
-        s_usb_stop_requested = true;
-    }
-    xSemaphoreGive(s_usb_lock);
-
-    for (int i = 0; s_usb_ref_count == 0 && s_usb_task_handle != NULL && i < 100; i++) {
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-
-    return ESP_OK;
-}
-
-static void uac_host_driver_callback(uint8_t addr, uint8_t iface_num,
-                                     const uac_host_driver_event_t event, void *arg)
-{
-    (void)arg;
-    if (s_uac_event_queue == NULL) {
+    if (event != UAC_HOST_DRIVER_EVENT_DISCONNECTED || codec == NULL) {
         return;
     }
 
-    const uac_driver_event_msg_t msg = {
-        .addr = addr,
-        .iface_num = iface_num,
-        .event = event,
-    };
-    (void)xQueueSend(s_uac_event_queue, &msg, 0);
-}
-
-static void uac_event_task(void *arg)
-{
-    (void)arg;
-    uac_driver_event_msg_t msg;
-
-    while (true) {
-        if (xQueueReceive(s_uac_event_queue, &msg, portMAX_DELAY) != pdTRUE) {
-            continue;
-        }
-
-        if (msg.event == UAC_HOST_DRIVER_EVENT_TX_CONNECTED) {
-            s_spk_dev_info = msg;
-            s_spk_dev_found = true;
-            ESP_LOGI(TAG, "UAC speaker found, addr: %u, iface: %u", msg.addr, msg.iface_num);
-        } else if (msg.event == UAC_HOST_DRIVER_EVENT_RX_CONNECTED) {
-            s_mic_dev_info = msg;
-            s_mic_dev_found = true;
-            ESP_LOGI(TAG, "UAC microphone found, addr: %u, iface: %u", msg.addr, msg.iface_num);
-        }
+    ESP_LOGI(TAG, "UAC %s disconnected", codec->config.is_input ? "microphone" : "speaker");
+    codec->disconnected = true;
+    codec->is_enabled = false;
+    codec->stream_started = false;
+    codec->size_per_second = 0;
+    if (codec->dev_handle == uac_device_handle) {
+        codec->dev_handle = NULL;
     }
+    (void)uac_host_device_close(uac_device_handle);
 }
 
-static esp_err_t uac_host_acquire(uint32_t preferred_rate)
+static esp_err_t uac_codec_open_device(uac_codec_t *codec)
 {
-    (void)preferred_rate;
+    if (codec->dev_handle != NULL) {
+        return ESP_OK;
+    }
+
+    const uac_host_device_config_t dev_config = {
+        .addr = codec->config.addr,
+        .iface_num = codec->config.iface_num,
+        .buffer_size = UAC_CODEC_BUFFER_SIZE,
+        .buffer_threshold = UAC_CODEC_THRESHOLD_SIZE,
+        .callback = uac_codec_device_callback,
+        .callback_arg = codec,
+    };
+
+    ESP_RETURN_ON_ERROR(uac_host_device_open(&dev_config, &codec->dev_handle), TAG, "failed to open UAC device");
+    return ESP_OK;
+}
+
+static esp_err_t uac_codec_start_device(uac_codec_t *codec)
+{
+    uac_host_dev_alt_param_t alt_param = {0};
     esp_err_t ret;
 
-    ret = shared_usb_host_acquire();
+    if (codec == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ret = uac_codec_open_device(codec);
     if (ret != ESP_OK) {
         return ret;
     }
 
-    if (!s_uac_installed) {
-        s_uac_event_queue = xQueueCreate(UAC_EVENT_QUEUE_LEN, sizeof(uac_driver_event_msg_t));
-        ESP_GOTO_ON_FALSE(s_uac_event_queue != NULL, ESP_ERR_NO_MEM, fail, TAG, "failed to create UAC queue");
-
-        const uac_host_driver_config_t uac_config = {
-            .create_background_task = true,
-            .task_priority = UAC_TASK_PRIORITY,
-            .stack_size = UAC_TASK_STACK_SIZE,
-            .core_id = 0,
-            .callback = uac_host_driver_callback,
-            .callback_arg = NULL,
-        };
-        ESP_GOTO_ON_ERROR(uac_host_install(&uac_config), fail, TAG, "failed to install UAC host");
-
-        BaseType_t task_ret = xTaskCreatePinnedToCore(uac_event_task, "uac_events", UAC_TASK_STACK_SIZE,
-                                                      NULL, UAC_TASK_PRIORITY,
-                                                      &s_uac_task_handle, 0);
-        ESP_GOTO_ON_FALSE(task_ret == pdTRUE, ESP_ERR_NO_MEM, fail_uninstall, TAG, "failed to create UAC task");
-
-        s_uac_installed = true;
-        ESP_LOGI(TAG, "UAC host installed");
+    ret = uac_host_get_device_alt_param(codec->dev_handle, 1, &alt_param);
+    if (ret != ESP_OK) {
+        (void)uac_host_device_close(codec->dev_handle);
+        codec->dev_handle = NULL;
+        return ret;
     }
 
-    s_uac_ref_count++;
+    if (codec->fs.sample_rate == 0) {
+        codec->fs.sample_rate = codec->config.preferred_sample_rate;
+    }
+    if (codec->fs.sample_rate == 0) {
+        codec->fs.sample_rate = UAC_CODEC_DEFAULT_RATE;
+    }
+    if (codec->fs.bits_per_sample == 0) {
+        codec->fs.bits_per_sample = alt_param.bit_resolution;
+    }
+    if (codec->fs.channel == 0) {
+        codec->fs.channel = alt_param.channels;
+    }
+
+    const uac_host_stream_config_t stream_config = {
+        .channels = codec->fs.channel,
+        .bit_resolution = codec->fs.bits_per_sample,
+        .sample_freq = select_uac_sample_rate(&alt_param, codec->fs.sample_rate),
+    };
+    if (stream_config.sample_freq != codec->fs.sample_rate) {
+        ESP_LOGI(TAG, "UAC device does not support preferred sample rate %" PRIu32 " Hz, using %" PRIu32 " Hz",
+                 codec->fs.sample_rate, stream_config.sample_freq);
+    }
+
+    ret = uac_host_device_start(codec->dev_handle, &stream_config);
+    if (ret != ESP_OK) {
+        (void)uac_host_device_close(codec->dev_handle);
+        codec->dev_handle = NULL;
+        return ret;
+    }
+
+    codec->fs.sample_rate = stream_config.sample_freq;
+    codec->fs.bits_per_sample = stream_config.bit_resolution;
+    codec->fs.channel = stream_config.channels;
+    codec->size_per_second = codec->fs.sample_rate * codec->fs.bits_per_sample / 8 * codec->fs.channel;
+    codec->disconnected = false;
+    codec->stream_started = true;
+
+    if (codec->config.is_input) {
+        (void)uac_host_device_set_mute(codec->dev_handle, false);
+        ESP_LOGI(TAG, "UAC microphone started: %" PRIu32 " Hz, %u bits, %u channels",
+                 stream_config.sample_freq, stream_config.bit_resolution, stream_config.channels);
+    } else {
+        (void)uac_host_device_set_volume(codec->dev_handle, 50);
+        (void)uac_host_device_set_mute(codec->dev_handle, false);
+        ESP_LOGI(TAG, "UAC speaker started: %" PRIu32 " Hz, %u bits, %u channels",
+                 stream_config.sample_freq, stream_config.bit_resolution, stream_config.channels);
+    }
+
     return ESP_OK;
-
-fail_uninstall:
-    (void)uac_host_uninstall();
-fail:
-    if (s_uac_event_queue) {
-        vQueueDelete(s_uac_event_queue);
-        s_uac_event_queue = NULL;
-    }
-    (void)shared_usb_host_release();
-    return ret;
 }
 
-static esp_err_t uac_host_release(void)
+static void uac_codec_stop_device(uac_codec_t *codec)
 {
-    if (s_uac_ref_count > 0) {
-        s_uac_ref_count--;
+    if (codec == NULL || codec->dev_handle == NULL || !codec->stream_started) {
+        return;
     }
-    if (s_uac_ref_count == 0 && s_uac_installed) {
-        if (s_uac_task_handle) {
-            vTaskDelete(s_uac_task_handle);
-            s_uac_task_handle = NULL;
-        }
-        (void)uac_host_uninstall();
-        if (s_uac_event_queue) {
-            vQueueDelete(s_uac_event_queue);
-            s_uac_event_queue = NULL;
-        }
-        s_uac_installed = false;
-        s_spk_dev_found = false;
-        s_mic_dev_found = false;
-        ESP_LOGI(TAG, "UAC host uninstalled");
-    }
-    return shared_usb_host_release();
+
+    (void)uac_host_device_stop(codec->dev_handle);
+    codec->stream_started = false;
+    codec->size_per_second = 0;
 }
 
-static esp_err_t wait_for_uac_device(usb_device_kind_t kind, uac_driver_event_msg_t *out_info)
+static void uac_codec_close_device(uac_codec_t *codec)
 {
-    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(UAC_CONNECT_TIMEOUT_MS);
-
-    while (xTaskGetTickCount() < deadline) {
-        const bool found = (kind == USB_DEVICE_KIND_UAC_SPK) ? s_spk_dev_found : s_mic_dev_found;
-        if (found) {
-            *out_info = (kind == USB_DEVICE_KIND_UAC_SPK) ? s_spk_dev_info : s_mic_dev_info;
-            return ESP_OK;
-        }
-        vTaskDelay(pdMS_TO_TICKS(50));
+    if (codec == NULL || codec->dev_handle == NULL) {
+        return;
     }
 
-    return ESP_ERR_TIMEOUT;
+    uac_codec_stop_device(codec);
+    (void)uac_host_device_close(codec->dev_handle);
+    codec->dev_handle = NULL;
 }
 
-static int usb_camera_init(void *config, int cfg_size, void **device_handle)
+static int uac_codec_try_enable(uac_codec_t *codec, bool enable)
 {
-    (void)config;
+    if (codec == NULL) {
+        return ESP_CODEC_DEV_INVALID_ARG;
+    }
+
+    if (!enable) {
+        uac_codec_stop_device(codec);
+        codec->is_enabled = false;
+        return ESP_CODEC_DEV_OK;
+    }
+
+    if (codec->is_enabled) {
+        return ESP_CODEC_DEV_OK;
+    }
+    if (!codec->is_dev_enabled || !codec->is_data_enabled) {
+        return ESP_CODEC_DEV_OK;
+    }
+    if (codec->disconnected) {
+        return ESP_CODEC_DEV_NOT_FOUND;
+    }
+
+    esp_err_t ret = uac_codec_start_device(codec);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "failed to start UAC %s: %s",
+                 codec->config.is_input ? "microphone" : "speaker", esp_err_to_name(ret));
+        return ret;
+    }
+
+    codec->is_enabled = true;
+    return ESP_CODEC_DEV_OK;
+}
+
+static int uac_codec_open(const audio_codec_if_t *h, void *cfg, int cfg_size)
+{
+    (void)cfg;
     (void)cfg_size;
-    ESP_RETURN_ON_FALSE(device_handle != NULL, ESP_ERR_INVALID_ARG, TAG, "invalid camera handle");
+    uac_codec_t *codec = (uac_codec_t *)h;
 
-#if CONFIG_ESP_VIDEO_ENABLE_USB_UVC_VIDEO_DEVICE
-    esp_err_t ret = shared_usb_host_acquire();
-    if (ret != ESP_OK) {
-        return ret;
+    if (codec == NULL) {
+        return ESP_CODEC_DEV_INVALID_ARG;
     }
-
-    const esp_video_init_usb_uvc_config_t usb_uvc_config = {
-        .uvc = {
-            .uvc_dev_num = USB_UVC_DEV_NUM,
-            .task_stack = USB_UVC_TASK_STACK_SIZE,
-            .task_priority = USB_UVC_TASK_PRIORITY,
-            .task_affinity = 0,
-        },
-        .usb = {
-            .init_usb_host_lib = false,
-        },
-    };
-    const esp_video_init_config_t video_config = {
-        .usb_uvc = &usb_uvc_config,
-    };
-
-    ret = esp_video_init(&video_config);
-    if (ret != ESP_OK) {
-        (void)shared_usb_host_release();
-        return ret;
-    }
-
-    custom_usb_device_handle_t *handle = calloc(1, sizeof(*handle));
-    if (handle == NULL) {
-        (void)esp_video_deinit();
-        (void)shared_usb_host_release();
-        return ESP_ERR_NO_MEM;
-    }
-    handle->kind = USB_DEVICE_KIND_CAMERA;
-    handle->handle.dev_path = ESP_VIDEO_USB_UVC_NAME(0);
-    handle->handle.meta_path = "";
-    *device_handle = &handle->handle;
-    ESP_LOGI(TAG, "USB UVC camera initialized, dev_path: %s", handle->handle.dev_path);
-    return ret;
-#else
-    ESP_LOGE(TAG, "USB UVC camera is disabled. Enable CONFIG_ESP_VIDEO_ENABLE_USB_UVC_VIDEO_DEVICE");
-    return ESP_ERR_NOT_SUPPORTED;
-#endif
+    codec->is_open = true;
+    return ESP_CODEC_DEV_OK;
 }
 
-static int usb_camera_deinit(void *device_handle)
+static bool uac_codec_is_open(const audio_codec_if_t *h)
 {
-#if CONFIG_ESP_VIDEO_ENABLE_USB_UVC_VIDEO_DEVICE
-    free(device_handle);
-    ESP_RETURN_ON_ERROR(esp_video_deinit(), TAG, "failed to deinit USB UVC camera");
-    ESP_RETURN_ON_ERROR(shared_usb_host_release(), TAG, "failed to release USB host");
-    ESP_LOGI(TAG, "USB UVC camera deinitialized");
-    return ESP_OK;
-#else
-    (void)device_handle;
-    return ESP_OK;
-#endif
+    const uac_codec_t *codec = (const uac_codec_t *)h;
+    return codec != NULL && codec->is_open;
 }
 
-CUSTOM_DEVICE_IMPLEMENT(camera, usb_camera_init, usb_camera_deinit);
-
-
-const static dev_audio_codec_config_t esp_bmgr_fake_audio_dac_cfg = {
-    .name = "audio_dac",
-    .chip = "none",
-    .type = "audio_codec",
-    .data_if_type = 0,
-    .adc_enabled = true,
-    .adc_max_channel = 0,
-    .adc_channel_mask = 0x3,
-    .adc_channel_labels = "",
-    .adc_init_gain = 0,
-    .dac_enabled = true,
-    .dac_max_channel = 0,
-    .dac_channel_mask = 0x0,
-    .dac_init_gain = 10,
-    .pa_cfg = {
-        .name = NULL,
-        .port = 0,
-        .active_level = 0,
-        .gain = 0.0,
-    },
-    .i2c_cfg = {
-        .name = NULL,
-        .port = 0,
-        .address = 0,
-        .frequency = 0,
-    },
-    .i2s_cfg = {
-        .name = "i2s_audio_out",
-        .port = 0,
-        .clk_src = 0,
-        .tx_aux_out_io = -1,
-        .tx_aux_out_line = 0,
-        .tx_aux_out_invert = false,
-    },
-    .adc_cfg = {
-        .periph_name = NULL,
-        .sample_rate_hz = 0,
-        .max_store_buf_size = 0,
-        .conv_frame_size = 0,
-        .conv_mode = 0,
-        .format = 0,
-        .pattern_num = 0,
-        .cfg_mode = 0,
-        .cfg = {
-            .single_unit = {
-                .unit_id = 0,
-                .atten = 0,
-                .bit_width = 0,
-                .channel_id = {},
-            },
-        },
-    },
-    .metadata = NULL,
-    .metadata_size = 0,
-    .mclk_enabled = false,
-    .aec_enabled = false,
-    .eq_enabled = false,
-    .alc_enabled = false,
-};
-
-
-const static dev_audio_codec_config_t esp_bmgr_fake_audio_adc_cfg = {
-    .name = "audio_adc",
-    .chip = "none",
-    .type = "audio_codec",
-    .data_if_type = 0,
-    .adc_enabled = true,
-    .adc_max_channel = 0,
-    .adc_channel_mask = 0x3,
-    .adc_channel_labels = "",
-    .adc_init_gain = 0,
-    .dac_enabled = true,
-    .dac_max_channel = 0,
-    .dac_channel_mask = 0x0,
-    .dac_init_gain = 10,
-    .pa_cfg = {
-        .name = NULL,
-        .port = 0,
-        .active_level = 0,
-        .gain = 0.0,
-    },
-    .i2c_cfg = {
-        .name = NULL,
-        .port = 0,
-        .address = 0,
-        .frequency = 0,
-    },
-    .i2s_cfg = {
-        .name = "i2s_audio_out",
-        .port = 0,
-        .clk_src = 0,
-        .tx_aux_out_io = -1,
-        .tx_aux_out_line = 0,
-        .tx_aux_out_invert = false,
-    },
-    .adc_cfg = {
-        .periph_name = NULL,
-        .sample_rate_hz = 0,
-        .max_store_buf_size = 0,
-        .conv_frame_size = 0,
-        .conv_mode = 0,
-        .format = 0,
-        .pattern_num = 0,
-        .cfg_mode = 0,
-        .cfg = {
-            .single_unit = {
-                .unit_id = 0,
-                .atten = 0,
-                .bit_width = 0,
-                .channel_id = {},
-            },
-        },
-    },
-    .metadata = NULL,
-    .metadata_size = 0,
-    .mclk_enabled = false,
-    .aec_enabled = false,
-    .eq_enabled = false,
-    .alc_enabled = false,
-};
-
-static int audio_dac_init(void *config, int cfg_size, void **device_handle)
+static int uac_codec_enable(const audio_codec_if_t *h, bool enable)
 {
+    uac_codec_t *codec = (uac_codec_t *)h;
+
+    if (codec == NULL) {
+        return ESP_CODEC_DEV_INVALID_ARG;
+    }
+    codec->is_dev_enabled = enable;
+    return uac_codec_try_enable(codec, enable);
+}
+
+static int uac_codec_set_fs(const audio_codec_if_t *h, esp_codec_dev_sample_info_t *fs)
+{
+    uac_codec_t *codec = (uac_codec_t *)h;
+
+    if (codec == NULL || fs == NULL) {
+        return ESP_CODEC_DEV_INVALID_ARG;
+    }
+    codec->fs = *fs;
+    return ESP_CODEC_DEV_OK;
+}
+
+static int uac_codec_mute(const audio_codec_if_t *h, bool mute)
+{
+    uac_codec_t *codec = (uac_codec_t *)h;
+
+    if (codec == NULL || codec->dev_handle == NULL || codec->config.is_input) {
+        return ESP_CODEC_DEV_NOT_SUPPORT;
+    }
+    return uac_host_device_set_mute(codec->dev_handle, mute);
+}
+
+static int uac_codec_set_vol(const audio_codec_if_t *h, float db)
+{
+    uac_codec_t *codec = (uac_codec_t *)h;
+
+    if (codec == NULL || codec->dev_handle == NULL || codec->config.is_input) {
+        return ESP_CODEC_DEV_NOT_SUPPORT;
+    }
+    return uac_host_device_set_volume(codec->dev_handle, out_db_to_percent(db));
+}
+
+static int uac_codec_set_mic_gain(const audio_codec_if_t *h, float db)
+{
+    uac_codec_t *codec = (uac_codec_t *)h;
+
+    if (codec == NULL || codec->dev_handle == NULL || !codec->config.is_input) {
+        return ESP_CODEC_DEV_NOT_SUPPORT;
+    }
+    return uac_host_device_set_volume(codec->dev_handle, mic_volume_db_to_percent(db));
+}
+
+static int uac_codec_set_mic_channel_gain(const audio_codec_if_t *h, uint16_t channel_mask, float db)
+{
+    (void)h;
+    (void)channel_mask;
+    (void)db;
+    return ESP_CODEC_DEV_NOT_SUPPORT;
+}
+
+static int uac_codec_mute_mic(const audio_codec_if_t *h, bool mute)
+{
+    uac_codec_t *codec = (uac_codec_t *)h;
+
+    if (codec == NULL || codec->dev_handle == NULL || !codec->config.is_input) {
+        return ESP_CODEC_DEV_NOT_SUPPORT;
+    }
+    return uac_host_device_set_mute(codec->dev_handle, mute);
+}
+
+static int uac_codec_set_reg(const audio_codec_if_t *h, int reg, int value)
+{
+    (void)h;
+    (void)reg;
+    (void)value;
+    return ESP_CODEC_DEV_NOT_SUPPORT;
+}
+
+static int uac_codec_get_reg(const audio_codec_if_t *h, int reg, int *value)
+{
+    uac_codec_t *codec = (uac_codec_t *)h;
+
+    if (codec == NULL || value == NULL) {
+        return ESP_CODEC_DEV_INVALID_ARG;
+    }
+
+    /* Expose negotiated UAC stream format through virtual read-only registers. */
+    switch (reg) {
+    case UAC_CODEC_VREG_FORMAT_MAGIC:
+        *value = UAC_CODEC_VREG_FORMAT_MAGIC_VALUE;
+        return ESP_CODEC_DEV_OK;
+    case UAC_CODEC_VREG_FORMAT_SAMPLE_RATE:
+        *value = (int)codec->fs.sample_rate;
+        return ESP_CODEC_DEV_OK;
+    case UAC_CODEC_VREG_FORMAT_CHANNELS:
+        *value = (int)codec->fs.channel;
+        return ESP_CODEC_DEV_OK;
+    case UAC_CODEC_VREG_FORMAT_BITS:
+        *value = (int)codec->fs.bits_per_sample;
+        return ESP_CODEC_DEV_OK;
+    default:
+        return ESP_CODEC_DEV_NOT_SUPPORT;
+    }
+}
+
+static void uac_codec_dump_reg(const audio_codec_if_t *h)
+{
+    (void)h;
+}
+
+static int uac_codec_close(const audio_codec_if_t *h)
+{
+    uac_codec_t *codec = (uac_codec_t *)h;
+
+    if (codec == NULL) {
+        return ESP_CODEC_DEV_INVALID_ARG;
+    }
+    codec->is_open = false;
+    codec->is_dev_enabled = false;
+    return uac_codec_try_enable(codec, false);
+}
+
+static int uac_data_open(const audio_codec_data_if_t *h, void *data_cfg, int cfg_size)
+{
+    (void)data_cfg;
     (void)cfg_size;
-    ESP_RETURN_ON_FALSE(config != NULL && device_handle != NULL ,
-                        // cfg_size == sizeof(dev_custom_audio_dac_config_t),
-                        ESP_ERR_INVALID_ARG, TAG, "invalid UAC speaker config");
+    uac_codec_data_t *data_if = (uac_codec_data_t *)h;
 
-    const dev_custom_audio_dac_config_t *cfg = (const dev_custom_audio_dac_config_t *)config;
-    esp_err_t ret = uac_host_acquire(cfg->sample_rate_hz > 0 ? cfg->sample_rate_hz : 16000);
-    if (ret != ESP_OK) {
-        return ret;
+    if (data_if == NULL || data_if->codec == NULL) {
+        return ESP_CODEC_DEV_INVALID_ARG;
+    }
+    return ESP_CODEC_DEV_OK;
+}
+
+static bool uac_data_is_open(const audio_codec_data_if_t *h)
+{
+    const uac_codec_data_t *data_if = (const uac_codec_data_t *)h;
+    return data_if != NULL && data_if->codec != NULL;
+}
+
+static int uac_data_enable(const audio_codec_data_if_t *h, esp_codec_dev_type_t dev_type, bool enable)
+{
+    uac_codec_data_t *data_if = (uac_codec_data_t *)h;
+
+    if (data_if == NULL || data_if->codec == NULL) {
+        return ESP_CODEC_DEV_INVALID_ARG;
+    }
+    data_if->codec->dev_type = dev_type;
+    data_if->codec->is_data_enabled = enable;
+    return uac_codec_try_enable(data_if->codec, enable);
+}
+
+static int uac_data_set_fmt(const audio_codec_data_if_t *h, esp_codec_dev_type_t dev_type,
+                            esp_codec_dev_sample_info_t *fs)
+{
+    uac_codec_data_t *data_if = (uac_codec_data_t *)h;
+
+    (void)dev_type;
+    if (data_if == NULL || data_if->codec == NULL || fs == NULL) {
+        return ESP_CODEC_DEV_INVALID_ARG;
+    }
+    data_if->codec->fs = *fs;
+    return ESP_CODEC_DEV_OK;
+}
+
+static int uac_data_read(const audio_codec_data_if_t *h, uint8_t *data, int size)
+{
+    uac_codec_data_t *data_if = (uac_codec_data_t *)h;
+
+    if (data_if == NULL || data_if->codec == NULL || data == NULL || size <= 0) {
+        return ESP_CODEC_DEV_INVALID_ARG;
     }
 
-    uac_driver_event_msg_t uac_info = {0};
-    ret = wait_for_uac_device(USB_DEVICE_KIND_UAC_SPK, &uac_info);
-    if (ret != ESP_OK) {
-        (void)uac_host_release();
-        ESP_LOGE(TAG, "UAC speaker not found: %s", esp_err_to_name(ret));
-        return ret;
+    uac_codec_t *codec = data_if->codec;
+    if (!codec->config.is_input || codec->dev_handle == NULL || !codec->is_enabled || codec->disconnected) {
+        return ESP_CODEC_DEV_WRONG_STATE;
     }
 
-    const uac_codec_config_t uac_config = {
-        .addr = uac_info.addr,
-        .iface_num = uac_info.iface_num,
-        .preferred_sample_rate = cfg->sample_rate_hz > 0 ? cfg->sample_rate_hz : 16000,
-        .is_input = false,
-    };
-    dev_audio_codec_handles_t *codec_handles = uac_codec_new_handle(&uac_config);
+    int timeout_ms = 200;
+    if (codec->size_per_second > 0) {
+        timeout_ms = (int)(((int64_t)size * 1000 * 4 + codec->size_per_second - 1) / codec->size_per_second);
+        timeout_ms = (timeout_ms < 200) ? 200 : timeout_ms;
+    }
+
+    int bytes_total = size;
+    while (size > 0 && !codec->disconnected) {
+        uint32_t bytes_read = 0;
+        esp_err_t ret = uac_host_device_read(codec->dev_handle, data, size, &bytes_read, pdMS_TO_TICKS(timeout_ms));
+        if (ret != ESP_OK || bytes_read == 0) {
+            ESP_LOGE(TAG, "UAC microphone read failed: err=%s req=%d remaining=%d read=%" PRIu32
+                     " timeout=%dms bps=%d fmt=%" PRIu32 "/%u/%u enabled=%d disconnected=%d",
+                     esp_err_to_name(ret), bytes_total, size, bytes_read, timeout_ms, codec->size_per_second, codec->fs.sample_rate,
+                     codec->fs.channel, codec->fs.bits_per_sample, codec->is_enabled, codec->disconnected);
+            return ESP_CODEC_DEV_READ_FAIL;
+        }
+        data += bytes_read;
+        size -= bytes_read;
+    }
+
+    return codec->disconnected ? ESP_CODEC_DEV_NOT_FOUND : ESP_CODEC_DEV_OK;
+}
+
+static int uac_data_write(const audio_codec_data_if_t *h, uint8_t *data, int size)
+{
+    uac_codec_data_t *data_if = (uac_codec_data_t *)h;
+
+    if (data_if == NULL || data_if->codec == NULL || data == NULL || size <= 0) {
+        return ESP_CODEC_DEV_INVALID_ARG;
+    }
+
+    uac_codec_t *codec = data_if->codec;
+    if (codec->config.is_input || codec->dev_handle == NULL || !codec->is_enabled || codec->disconnected) {
+        return ESP_CODEC_DEV_WRONG_STATE;
+    }
+
+    int timeout_ms = 20;
+    if (codec->size_per_second > 0) {
+        timeout_ms = (int)(((int64_t)size * 1000 * 8 + codec->size_per_second - 1) / codec->size_per_second);
+        if (timeout_ms < 20) {
+            timeout_ms = 20;
+        }
+    }
+
+    esp_err_t ret = uac_host_device_write(codec->dev_handle, data, size, pdMS_TO_TICKS(timeout_ms));
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "UAC speaker write failed: err=%s req=%d timeout=%dms bps=%d fmt=%" PRIu32 "/%u/%u enabled=%d disconnected=%d",
+                 esp_err_to_name(ret), size, timeout_ms, codec->size_per_second, codec->fs.sample_rate, codec->fs.channel, codec->fs.bits_per_sample,
+                 codec->is_enabled, codec->disconnected);
+        return ESP_CODEC_DEV_WRITE_FAIL;
+    }
+    return ESP_CODEC_DEV_OK;
+}
+
+static int uac_data_close(const audio_codec_data_if_t *h)
+{
+    uac_codec_data_t *data_if = (uac_codec_data_t *)h;
+
+    if (data_if == NULL || data_if->codec == NULL) {
+        return ESP_CODEC_DEV_INVALID_ARG;
+    }
+    data_if->codec->is_data_enabled = false;
+    return uac_codec_try_enable(data_if->codec, false);
+}
+
+static const audio_codec_if_t *uac_codec_new_codec_if(const uac_codec_config_t *config)
+{
+    uac_codec_t *codec = calloc(1, sizeof(*codec));
+    if (codec == NULL) {
+        return NULL;
+    }
+
+    codec->base.open = uac_codec_open;
+    codec->base.is_open = uac_codec_is_open;
+    codec->base.enable = uac_codec_enable;
+    codec->base.set_fs = uac_codec_set_fs;
+    codec->base.mute = uac_codec_mute;
+    codec->base.set_vol = uac_codec_set_vol;
+    codec->base.set_mic_gain = uac_codec_set_mic_gain;
+    codec->base.set_mic_channel_gain = uac_codec_set_mic_channel_gain;
+    codec->base.mute_mic = uac_codec_mute_mic;
+    codec->base.set_reg = uac_codec_set_reg;
+    codec->base.get_reg = uac_codec_get_reg;
+    codec->base.dump_reg = uac_codec_dump_reg;
+    codec->base.close = uac_codec_close;
+    codec->config = *config;
+    codec->dev_type = config->is_input ? ESP_CODEC_DEV_TYPE_IN : ESP_CODEC_DEV_TYPE_OUT;
+    codec->base.open(&codec->base, NULL, 0);
+
+    return &codec->base;
+}
+
+static const audio_codec_data_if_t *uac_codec_new_data_if(const audio_codec_if_t *codec_if)
+{
+    uac_codec_data_t *data_if = calloc(1, sizeof(*data_if));
+    if (data_if == NULL) {
+        return NULL;
+    }
+
+    data_if->base.open = uac_data_open;
+    data_if->base.is_open = uac_data_is_open;
+    data_if->base.enable = uac_data_enable;
+    data_if->base.set_fmt = uac_data_set_fmt;
+    data_if->base.read = uac_data_read;
+    data_if->base.write = uac_data_write;
+    data_if->base.close = uac_data_close;
+    data_if->codec = (uac_codec_t *)codec_if;
+
+    return &data_if->base;
+}
+
+dev_audio_codec_handles_t *uac_codec_new_handle(const uac_codec_config_t *config)
+{
+    if (config == NULL) {
+        return NULL;
+    }
+
+    dev_audio_codec_handles_t *codec_handles = calloc(1, sizeof(*codec_handles));
     if (codec_handles == NULL) {
-        (void)uac_host_release();
-        return ESP_ERR_NO_MEM;
+        return NULL;
     }
-    *device_handle = codec_handles;
-    esp_board_device_override_config("audio_dac", (void *)&esp_bmgr_fake_audio_dac_cfg, sizeof(esp_bmgr_fake_audio_dac_cfg));
-    ESP_LOGI(TAG, "UAC speaker initialized, codec_handles: %p", codec_handles);
-    return ESP_OK;
-}
+    codec_handles->tx_aux_out_io = -1;
 
-static int audio_dac_deinit(void *device_handle)
-{
-    uac_codec_delete_handle((dev_audio_codec_handles_t *)device_handle);
-    return uac_host_release();
-}
-
-CUSTOM_DEVICE_IMPLEMENT(audio_dac, audio_dac_init, audio_dac_deinit);
-
-static int audio_adc_init(void *config, int cfg_size, void **device_handle)
-{
-    (void)cfg_size;
-    ESP_RETURN_ON_FALSE(config != NULL && device_handle != NULL ,
-                        // cfg_size == sizeof(dev_custom_audio_adc_config_t),
-                        ESP_ERR_INVALID_ARG, TAG, "invalid UAC microphone config");
-
-    const dev_custom_audio_adc_config_t *cfg = (const dev_custom_audio_adc_config_t *)config;
-    esp_err_t ret = uac_host_acquire(cfg->sample_rate_hz > 0 ? cfg->sample_rate_hz : 16000);
-    if (ret != ESP_OK) {
-        return ret;
+    codec_handles->codec_if = uac_codec_new_codec_if(config);
+    if (codec_handles->codec_if == NULL) {
+        free(codec_handles);
+        return NULL;
     }
 
-    uac_driver_event_msg_t uac_info = {0};
-    ret = wait_for_uac_device(USB_DEVICE_KIND_UAC_MIC, &uac_info);
-    if (ret != ESP_OK) {
-        (void)uac_host_release();
-        ESP_LOGE(TAG, "UAC microphone not found: %s", esp_err_to_name(ret));
-        return ret;
+    codec_handles->data_if = uac_codec_new_data_if(codec_handles->codec_if);
+    if (codec_handles->data_if == NULL) {
+        audio_codec_delete_codec_if(codec_handles->codec_if);
+        free(codec_handles);
+        return NULL;
     }
 
-    const uac_codec_config_t uac_config = {
-        .addr = uac_info.addr,
-        .iface_num = uac_info.iface_num,
-        .preferred_sample_rate = cfg->sample_rate_hz > 0 ? cfg->sample_rate_hz : 16000,
-        .is_input = true,
+    esp_codec_dev_cfg_t dev_cfg = {
+        .codec_if = codec_handles->codec_if,
+        .data_if = codec_handles->data_if,
+        .dev_type = config->is_input ? ESP_CODEC_DEV_TYPE_IN : ESP_CODEC_DEV_TYPE_OUT,
     };
-    dev_audio_codec_handles_t *codec_handles = uac_codec_new_handle(&uac_config);
+    codec_handles->codec_dev = esp_codec_dev_new(&dev_cfg);
+    if (codec_handles->codec_dev == NULL) {
+        audio_codec_delete_data_if(codec_handles->data_if);
+        audio_codec_delete_codec_if(codec_handles->codec_if);
+        free(codec_handles);
+        return NULL;
+    }
+
+    return codec_handles;
+}
+
+void uac_codec_delete_handle(dev_audio_codec_handles_t *codec_handles)
+{
     if (codec_handles == NULL) {
-        (void)uac_host_release();
-        return ESP_ERR_NO_MEM;
+        return;
     }
-    *device_handle = codec_handles;
-    esp_board_device_override_config("audio_adc", (void *)&esp_bmgr_fake_audio_adc_cfg, sizeof(esp_bmgr_fake_audio_adc_cfg));
-    ESP_LOGI(TAG, "UAC microphone initialized, codec_handles: %p", codec_handles);
-    return ESP_OK;
-}
-
-static int audio_adc_deinit(void *device_handle)
-{
-    uac_codec_delete_handle((dev_audio_codec_handles_t *)device_handle);
-    return uac_host_release();
-}
-
-CUSTOM_DEVICE_IMPLEMENT(audio_adc, audio_adc_init, audio_adc_deinit);
-
-esp_err_t lcd_panel_factory_entry_t(esp_lcd_panel_io_handle_t io, const esp_lcd_panel_dev_config_t *panel_dev_config, esp_lcd_panel_handle_t *ret_panel)
-{
-    esp_lcd_panel_dev_config_t panel_dev_cfg = {0};
-    memcpy(&panel_dev_cfg, panel_dev_config, sizeof(esp_lcd_panel_dev_config_t));
-    int ret = esp_lcd_new_panel_st7789(io, &panel_dev_cfg, ret_panel);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "New st7789 panel failed");
-        return ret;
+    uac_codec_t *codec = (uac_codec_t *)codec_handles->codec_if;
+    if (codec_handles->codec_dev) {
+        esp_codec_dev_delete(codec_handles->codec_dev);
+        codec_handles->codec_dev = NULL;
     }
-    return ESP_OK;
+    uac_codec_close_device(codec);
+    if (codec_handles->data_if) {
+        audio_codec_delete_data_if(codec_handles->data_if);
+        codec_handles->data_if = NULL;
+    }
+    if (codec_handles->codec_if) {
+        audio_codec_delete_codec_if(codec_handles->codec_if);
+        codec_handles->codec_if = NULL;
+    }
+    free(codec_handles);
 }
