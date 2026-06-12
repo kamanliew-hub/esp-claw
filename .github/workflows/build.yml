@@ -38,6 +38,9 @@ jobs:
           cp build/edge_agent.bin $GITHUB_WORKSPACE/release/
           cp build/flash_args $GITHUB_WORKSPACE/release/
           cp build/ota_data_initial.bin $GITHUB_WORKSPACE/release/
+          cp build/emote_assets.bin $GITHUB_WORKSPACE/release/
+          cp build/system.bin $GITHUB_WORKSPACE/release/
+          cp build/storage.bin $GITHUB_WORKSPACE/release/
           cd $GITHUB_WORKSPACE/release && zip -j esp-claw-esp32s3-firmware.zip *
 
       - name: Create Release
