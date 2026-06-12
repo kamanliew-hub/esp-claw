@@ -26,7 +26,7 @@ jobs:
             pip install -q esp-bmgr-assist
             pip install --upgrade pip
             pip install --upgrade esptool
-            idf.py gen-bmgr-config -c ./boards -b esp32_S3_DevKitC_1_breadboard
+            idf.py gen-bmgr-config -c ./boards -b esp32_S3_DevKitC_1_N16R8_breadboard
             idf.py build
 
       - name: Package firmware binaries
@@ -45,6 +45,6 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: "ESP-Claw Firmware v${{ github.run_number }}"
-          body: "✅ 自动编译完成\n- 开发板: esp32_S3_DevKitC_1_breadboard_N16R8\n- 芯片: ESP32-S3 (16MB Flash + 8MB PSRAM)"
+          body: "✅ 自动编译完成\n- 开发板: esp32_S3_DevKitC_1_N16R8_breadboard\n- 芯片: ESP32-S3 (16MB Flash + 8MB PSRAM)"
           files: release/esp-claw-esp32s3-firmware.zip
           make_latest: true
