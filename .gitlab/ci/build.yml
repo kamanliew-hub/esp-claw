@@ -34,6 +34,7 @@
       - "**/build*/mmap_build/**/*.bin"
       - "**/build*/**/*.bin"
       - "merged_binary/*.bin"
+      - "merged_binary/*.gz"
       - "merged_binary/*.json"
       - size_info.txt
     expire_in: 1 week
@@ -47,6 +48,7 @@
     EXAMPLE_BOARD: "default"
     EXAMPLE_BOARD_PATH: "boards"
     BUILD_RECURSIVE: "1"
+    MERGED_BINARY_FORMATS: "gzip"
   script:
     - pip install idf_build_apps esp-bmgr-assist
     - |
@@ -94,7 +96,7 @@ build_application_edge_agent:
       #   ```
 
       - IMAGE: ["espressif/idf:release-v5.5"]
-        EXAMPLE_BOARD: ["esp32_S3_DevKitC_1", "esp32_S3_DevKitC_1_breadboard"]
+        EXAMPLE_BOARD: ["esp32_S3_DevKitC_1", "esp32_S3_DevKitC_1_breadboard", "esp32_S3_DevKitC_1_N32R16V_breadboard"]
         EXAMPLE_TARGET: esp32s3
         EXAMPLE_BOARD_BRAND: "espressif"
         EXAMPLE_CONFIG: "sdkconfig.console.jtag=jtag"
