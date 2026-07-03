@@ -1,0 +1,175 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #0d1014;
+  color: #eef2f5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #0d1014;
+}
+
+button {
+  font: inherit;
+}
+
+.app {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #252b34;
+  background: #12171d;
+}
+
+.title {
+  min-width: 0;
+}
+
+.title h1 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.title p {
+  margin: 4px 0 0;
+  color: #9aa6b2;
+  font-size: 13px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.button {
+  border: 1px solid #3b4654;
+  background: #1a222b;
+  color: #eef2f5;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.button.primary {
+  border-color: #ee5b4f;
+  background: #d84238;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  min-height: 0;
+}
+
+.panel {
+  border-right: 1px solid #252b34;
+  padding: 16px;
+  overflow: auto;
+}
+
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.meta {
+  display: grid;
+  gap: 10px;
+}
+
+.row {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.label {
+  color: #9aa6b2;
+}
+
+.value {
+  color: #eef2f5;
+  overflow-wrap: anywhere;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag {
+  border: 1px solid #3b4654;
+  color: #dfe7ee;
+  background: #171d24;
+  padding: 3px 7px;
+  font-size: 12px;
+}
+
+.status {
+  margin-top: 14px;
+  padding: 10px;
+  border: 1px solid #3b4654;
+  background: #151b22;
+  color: #cdd6df;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.status.error {
+  border-color: #9d3833;
+  color: #ffb6ae;
+  background: #241413;
+}
+
+.runtime {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  background: #05070a;
+}
+
+.runtime iframe {
+  width: 100%;
+  height: 100%;
+  min-height: calc(100vh - 59px);
+  border: 0;
+  background: #000;
+}
+
+@media (max-width: 820px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .panel {
+    border-right: 0;
+    border-bottom: 1px solid #252b34;
+  }
+
+  .runtime iframe {
+    min-height: 70vh;
+  }
+}
