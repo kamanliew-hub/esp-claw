@@ -210,6 +210,12 @@ esp_err_t lua_lvgl_register_fs_locked(void)
     if (s_lvgl.fs_registered) {
         return ESP_OK;
     }
+#ifdef __EMSCRIPTEN__
+    if (!s_lvgl.data_root[0]) {
+        s_lvgl.data_root[0] = '/';
+        s_lvgl.data_root[1] = '\0';
+    }
+#endif
     ESP_RETURN_ON_FALSE(s_lvgl.data_root[0], ESP_ERR_INVALID_STATE, TAG, "data root is not configured");
 
     existing = lv_fs_get_drv(LUA_MODULE_LVGL_FS_LETTER);

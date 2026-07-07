@@ -28,6 +28,34 @@
 #include "lauxlib.h"
 #include "lvgl.h"
 
+#ifdef __EMSCRIPTEN__
+#ifndef LV_CHART_TYPE_CURVE
+#define LV_CHART_TYPE_CURVE LV_CHART_TYPE_LINE
+#endif
+#ifndef LV_CHART_TYPE_STACKED
+#define LV_CHART_TYPE_STACKED LV_CHART_TYPE_BAR
+#endif
+static inline void lua_lvgl_web_spinner_set_anim_duration(lv_obj_t *obj, uint32_t duration)
+{
+    (void)obj;
+    (void)duration;
+}
+static inline void lua_lvgl_web_spinner_set_arc_sweep(lv_obj_t *obj, uint32_t sweep)
+{
+    (void)obj;
+    (void)sweep;
+}
+static inline void lua_lvgl_web_tabview_set_tab_text(lv_obj_t *tv, uint32_t index, const char *text)
+{
+    (void)tv;
+    (void)index;
+    (void)text;
+}
+#define lv_spinner_set_anim_duration lua_lvgl_web_spinner_set_anim_duration
+#define lv_spinner_set_arc_sweep lua_lvgl_web_spinner_set_arc_sweep
+#define lv_tabview_set_tab_text lua_lvgl_web_tabview_set_tab_text
+#endif
+
 #define LUA_MODULE_LVGL_NAME "lvgl"
 #define LUA_MODULE_LVGL_DEFAULT_BUFFER_LINES 40
 #define LUA_MODULE_LVGL_DEFAULT_TICK_MS 5

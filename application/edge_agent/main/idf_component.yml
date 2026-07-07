@@ -27,8 +27,8 @@ dependencies:
   captive_dns:
     path: ../../../components/common/captive_dns
 
-  claw_ramfs:
-    path: ../../../components/claw_modules/claw_ramfs
+  espressif/ramfs:
+    version: "^0.1"
 
   claw_utils:
     path: ../../../components/claw_modules/claw_utils

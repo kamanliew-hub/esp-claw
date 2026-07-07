@@ -436,6 +436,15 @@ static int lua_lvgl_drain_events_for(lua_State *L, int timeout_ms)
         lua_lvgl_event_sub_t *sub;
         int callback_ref;
 
+#ifdef __EMSCRIPTEN__
+        if (lua_lvgl_lock() == ESP_OK) {
+            if (s_lvgl.runtime_initialized) {
+                (void)lv_timer_handler();
+            }
+            lua_lvgl_unlock();
+        }
+#endif
+
         if (cap_lua_runtime_stop_requested(L)) {
             break;
         }
@@ -450,9 +459,15 @@ static int lua_lvgl_drain_events_for(lua_State *L, int timeout_ms)
                  * there now". */
                 break;
             }
+#ifdef __EMSCRIPTEN__
+            /* The browser RAF cadence needs headroom beyond a 20 ms sleep;
+             * otherwise any render work drops the simulator below 50 fps. */
+            vTaskDelay(pdMS_TO_TICKS(10));
+#else
             /* Sleep briefly and re-check both stop and deadline. 20ms is
              * about one LVGL tick and keeps stop responsiveness ~50Hz. */
             vTaskDelay(pdMS_TO_TICKS(20));
+#endif
             continue;
         }
         if (sub->dead) {

@@ -503,6 +503,7 @@ static int lua_lvgl_init(lua_State *L)
         return lua_lvgl_error_esp(L, "start tick timer", err);
     }
 
+#ifndef __EMSCRIPTEN__
     if (xTaskCreate(lua_lvgl_task,
                     "lua_lvgl",
                     LUA_MODULE_LVGL_TASK_STACK,
@@ -512,6 +513,7 @@ static int lua_lvgl_init(lua_State *L)
         (void)lua_lvgl_deinit_runtime();
         return lua_lvgl_error_esp(L, "create task", ESP_ERR_NO_MEM);
     }
+#endif
 
     lua_pushboolean(L, 1);
     return 1;
