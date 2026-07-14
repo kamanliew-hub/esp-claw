@@ -34,6 +34,28 @@ export interface SkillFrontmatter {
   }
 }
 
+export interface CapabilityMocks {
+  http_request?: Array<{
+    method?: string
+    url?: string
+    url_contains?: string
+    status?: number
+    status_text?: string
+    body?: string
+    body_file?: string
+  }>
+}
+
+export interface SimulatorMocks {
+  capability?: CapabilityMocks
+  network_radio?: {
+    stations?: Array<{
+      title: string
+      url: string
+    }>
+  }
+}
+
 export interface SkillFile {
   path: string
   content: Uint8Array
@@ -48,4 +70,6 @@ export interface LoadedSkill {
   files: SkillFile[]
   entry: string
   virtualRoot: string
+  capabilityMocks: CapabilityMocks
+  simulatorMocks: SimulatorMocks
 }
