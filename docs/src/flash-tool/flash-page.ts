@@ -9,6 +9,11 @@ const WIFI_STATUS_PROBE_ATTEMPTS = 3;
 const WIFI_STATUS_PROBE_WAIT_MS = 1000;
 const WIFI_STATUS_PROBE_RETRY_GAP_MS = 3000;
 
+/** At ~60s elapsed, simulated erase progress reaches this fraction (logarithmic curve). */
+const ERASE_PROGRESS_TARGET_AT_60S = 0.8;
+const ERASE_PROGRESS_MAX_SIMULATED = 95;
+const ERASE_PROGRESS_TICK_MS = 200;
+
 const FIRMWARE_SITE_URL = import.meta.env.PUBLIC_FIRMWARE_SITE_URL ?? "https://esp-claw.com/versions";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -147,12 +152,8 @@ type Strings = {
   chooseVersionPlaceholder: string;
   versionMaster: string;
   advancedSettingsLabel: string;
-  flashModeLabel: string;
-  flashModeFullErase: string;
-  flashModeEraseSelectPartitions: string;
-  flashModeSelectPartitions: string;
-  partitionSelectionHintErase: string;
-  partitionSelectionHintPreserve: string;
+  eraseFlashBeforeFlash: string;
+  partitionSelectionHint: string;
   erasingFlash: string;
   downloadingPartitions: string;
   mergingFirmware: string;
@@ -251,6 +252,7 @@ const els = {
   partitionList: must("partition-list"),
   partitionSelection: must("partition-selection"),
   partitionSelectionHint: must("partition-selection-hint"),
+  eraseFlashCheckbox: must<HTMLInputElement>("erase-flash-checkbox"),
 
   consolePanel: must("console-panel"),
   consoleOutput: must("console-output"),
@@ -324,8 +326,9 @@ const state = {
   selectedBrand: null as string | null,
   selectedBoardId: null as string | null,
   selectedConsoleOutput: null as string | null,
-  flashMode: "full-erase" as "full-erase" | "erase-select-partitions" | "select-partitions",
+  eraseFlashBeforeFlash: false,
   selectedPartitions: new Set<string>(),
+  partitionListKey: "",
   visibleBoards: [] as VisibleBoard[],
   detectedConsoleOutput: null as DetectedConsoleOutput,
   readyIp: null as string | null,
@@ -379,6 +382,7 @@ async function init() {
   renderVersionOptions();
   renderChipOptions();
   refreshBoards();
+  updatePartitionSelectionUi();
   renderActionState();
   renderConsole();
 
@@ -426,13 +430,9 @@ async function init() {
     renderActionState();
   });
 
-  for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="flash-mode"]')) {
-    radio.addEventListener("change", () => {
-      state.flashMode = radio.value as typeof state.flashMode;
-      updatePartitionSelectionUi();
-      renderPartitionList();
-    });
-  }
+  els.eraseFlashCheckbox.addEventListener("change", () => {
+    state.eraseFlashBeforeFlash = els.eraseFlashCheckbox.checked;
+  });
 
   els.connectBtn.addEventListener("click", () => { void connectDevice(); });
   els.actionConnectBtn.addEventListener("click", () => { void connectDevice(); });
@@ -898,25 +898,46 @@ function renderSelectedBoard() {
 }
 
 function updatePartitionSelectionUi() {
-  const visible = state.flashMode === "erase-select-partitions" || state.flashMode === "select-partitions";
-  els.partitionSelection.style.display = visible ? "" : "none";
-  els.partitionSelectionHint.textContent =
-    state.flashMode === "erase-select-partitions"
-      ? s.partitionSelectionHintErase
-      : s.partitionSelectionHintPreserve;
+  els.partitionSelectionHint.textContent = s.partitionSelectionHint;
 }
 
 function renderPartitionList() {
   els.partitionList.innerHTML = "";
   const record = getSelectedConsoleRecord();
-  if (!record) return;
-
-  state.selectedPartitions.clear();
-  for (const [offset] of Object.entries(record.flash_files)) {
-    state.selectedPartitions.add(offset);
+  if (!record) {
+    state.selectedPartitions.clear();
+    state.partitionListKey = "";
+    return;
   }
 
-  for (const [offset, filePath] of Object.entries(record.flash_files)) {
+  const listKey = [
+    state.selectedApp,
+    state.selectedVersion,
+    state.selectedBoardId,
+    state.selectedConsoleOutput,
+  ].join(":");
+  const isNewList = listKey !== state.partitionListKey;
+  state.partitionListKey = listKey;
+
+  const entries = Object.entries(record.flash_files).sort((a, b) => {
+    const offsetA = parseHexAddress(a[0]) ?? 0;
+    const offsetB = parseHexAddress(b[0]) ?? 0;
+    return offsetA - offsetB;
+  });
+
+  if (isNewList) {
+    state.selectedPartitions.clear();
+    for (const [offset] of entries) state.selectedPartitions.add(offset);
+  } else {
+    for (const off of [...state.selectedPartitions]) {
+      if (!record.flash_files[off]) state.selectedPartitions.delete(off);
+    }
+    for (const [offset] of entries) {
+      if (!state.selectedPartitions.has(offset)) state.selectedPartitions.add(offset);
+    }
+  }
+
+  for (const [offset, filePath] of entries) {
     const fileName = filePath.split("/").pop() ?? filePath;
     const partName = findPartitionName(record.partition_table, offset) ?? fileName;
 
@@ -925,11 +946,12 @@ function renderPartitionList() {
 
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
-    checkbox.checked = true;
+    checkbox.checked = state.selectedPartitions.has(offset);
     checkbox.dataset.offset = offset;
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) state.selectedPartitions.add(offset);
       else state.selectedPartitions.delete(offset);
+      renderActionState();
     });
 
     const offsetSpan = document.createElement("span");
@@ -987,6 +1009,9 @@ function renderActionState() {
   } else if (!isCompatibleWithCurrentDevice(selected.chipKey, consoleRecord)) {
     flashDisabled = true;
     hint = s.flashBtnDisabledNoMatch;
+  } else if (state.selectedPartitions.size === 0) {
+    flashDisabled = true;
+    hint = s.flashBtnDisabledNoFirmware;
   }
 
   if (state.serial === "unsupported") flashDisabled = true;
@@ -1181,11 +1206,17 @@ async function flashSelectedFirmware() {
     }
 
     try {
-      if (state.flashMode === "full-erase" || state.flashMode === "erase-select-partitions") {
+      if (state.eraseFlashBeforeFlash) {
         updateModalProgress(s.erasingFlash, 0);
         addProgressLine(s.erasingFlash);
-        await (loader as ESPStubLoader).eraseFlash();
-        updateModalProgress(s.erasingFlash, 100);
+        const eraseProgress = startEraseProgressAnimation();
+        try {
+          await (loader as ESPStubLoader).eraseFlash();
+          eraseProgress.complete();
+        } catch (error) {
+          eraseProgress.cancel();
+          throw error;
+        }
       }
 
       const totalBytes = downloadedFiles.reduce((sum, f) => sum + f.data.byteLength, 0);
@@ -1276,11 +1307,10 @@ async function downloadSelectedFirmware() {
 }
 
 function getFilesToFlash(record: FirmwareRecord) {
-  const isFullErase = state.flashMode === "full-erase";
   const files: Array<{ offset: number; url: string; name: string }> = [];
 
   for (const [offsetStr, urlPath] of Object.entries(record.flash_files)) {
-    if (!isFullErase && !state.selectedPartitions.has(offsetStr)) continue;
+    if (!state.selectedPartitions.has(offsetStr)) continue;
 
     const offsetNum = Number.parseInt(offsetStr, 0);
     if (!Number.isFinite(offsetNum) || offsetNum < 0) continue;
@@ -1646,6 +1676,32 @@ function updateModalProgress(stage: string, percent: number) {
   const clamped = Math.max(0, Math.min(100, percent));
   els.modalProgressPct.textContent = `${clamped}%`;
   els.modalProgressBar.style.width = `${clamped}%`;
+}
+
+function startEraseProgressAnimation() {
+  const startTime = Date.now();
+  const timeConstantSec =
+    -60 / Math.log(1 - ERASE_PROGRESS_TARGET_AT_60S);
+
+  const timer = window.setInterval(() => {
+    const elapsedSec = (Date.now() - startTime) / 1000;
+    const fraction = 1 - Math.exp(-elapsedSec / timeConstantSec);
+    const pct = Math.min(
+      ERASE_PROGRESS_MAX_SIMULATED,
+      Math.round(100 * fraction),
+    );
+    updateModalProgress(s.erasingFlash, pct);
+  }, ERASE_PROGRESS_TICK_MS);
+
+  return {
+    complete() {
+      window.clearInterval(timer);
+      updateModalProgress(s.erasingFlash, 100);
+    },
+    cancel() {
+      window.clearInterval(timer);
+    },
+  };
 }
 
 function addProgressLine(line: string) {

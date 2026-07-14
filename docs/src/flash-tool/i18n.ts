@@ -109,12 +109,8 @@ export interface Strings {
   chooseVersionPlaceholder: string;
   versionMaster: string;
   advancedSettingsLabel: string;
-  flashModeLabel: string;
-  flashModeFullErase: string;
-  flashModeEraseSelectPartitions: string;
-  flashModeSelectPartitions: string;
-  partitionSelectionHintErase: string;
-  partitionSelectionHintPreserve: string;
+  eraseFlashBeforeFlash: string;
+  partitionSelectionHint: string;
   erasingFlash: string;
   downloadingPartitions: string;
   mergingFirmware: string;
@@ -239,13 +235,9 @@ const en: Strings = {
   chooseVersionPlaceholder: "Choose a version",
   versionMaster: "Latest (master)",
   advancedSettingsLabel: "Advanced Settings",
-  flashModeLabel: "Flash Mode",
-  flashModeFullErase: "Erase flash and flash all partitions",
-  flashModeEraseSelectPartitions: "Erase flash and select partitions to flash",
-  flashModeSelectPartitions: "Select partitions to flash (unchanged partitions preserved)",
-  partitionSelectionHintErase: "Select partitions to write. The entire flash will be erased first.",
-  partitionSelectionHintPreserve: "Select partitions to write. Unchecked partitions will not be modified.",
-  erasingFlash: "Erasing flash…",
+  eraseFlashBeforeFlash: "Erase entire flash before flashing (may take a few minutes)",
+  partitionSelectionHint: "Select partitions to flash.",
+  erasingFlash: "Erasing flash (may take a few minutes)…",
   downloadingPartitions: "Downloading partition files…",
   mergingFirmware: "Merging partition files…",
   downloadReady: "Merged firmware is ready. Download started automatically.",
@@ -367,13 +359,9 @@ const zhCn: Strings = {
   chooseVersionPlaceholder: "选择版本",
   versionMaster: "最新版 (master)",
   advancedSettingsLabel: "高级设置",
-  flashModeLabel: "烧录模式",
-  flashModeFullErase: "擦除 Flash 并烧写全部分区",
-  flashModeEraseSelectPartitions: "擦除 Flash 并选择需要烧录的分区",
-  flashModeSelectPartitions: "手动选择分区（未选中的分区不会被修改）",
-  partitionSelectionHintErase: "选择需要烧录的分区。烧录前会先擦除整片 Flash。",
-  partitionSelectionHintPreserve: "选择需要烧录的分区。未选中的分区不会被修改。",
-  erasingFlash: "正在擦除 Flash…",
+  eraseFlashBeforeFlash: "烧录前擦除全部 Flash（约需数分钟）",
+  partitionSelectionHint: "选择需要烧录的分区。",
+  erasingFlash: "正在擦除 Flash（约需数分钟）…",
   downloadingPartitions: "正在下载分区文件…",
   mergingFirmware: "正在合并分区文件…",
   downloadReady: "合并固件已准备完成，已自动开始下载。",
