@@ -31,6 +31,7 @@ export interface Strings {
   firmwareRequirementsLabel: string;
   firmwareDescriptionLabel: string;
   downloadFirmwareLocalLink: string;
+  closeBtn: string;
 
   downloadBtn: string;
   flashBtn: string;
@@ -116,6 +117,9 @@ export interface Strings {
   partitionSelectionHintPreserve: string;
   erasingFlash: string;
   downloadingPartitions: string;
+  mergingFirmware: string;
+  downloadReady: string;
+  downloadError: string;
   flashingPartition: string;
   loadingVersions: string;
   loadVersionsError: string;
@@ -152,6 +156,7 @@ const en: Strings = {
   firmwareRequirementsLabel: "Firmware requirements",
   firmwareDescriptionLabel: "Firmware description",
   downloadFirmwareLocalLink: "Download firmware locally",
+  closeBtn: "Close",
 
   downloadBtn: "Download Firmware",
   flashBtn: "Flash Firmware",
@@ -242,6 +247,9 @@ const en: Strings = {
   partitionSelectionHintPreserve: "Select partitions to write. Unchecked partitions will not be modified.",
   erasingFlash: "Erasing flash…",
   downloadingPartitions: "Downloading partition files…",
+  mergingFirmware: "Merging partition files…",
+  downloadReady: "Merged firmware is ready. Download started automatically.",
+  downloadError: "Download failed: ",
   flashingPartition: "Flashing {name} at {offset}…",
   loadingVersions: "Loading versions…",
   loadVersionsError: "Failed to load version list",
@@ -278,6 +286,7 @@ const zhCn: Strings = {
   firmwareRequirementsLabel: "固件要求",
   firmwareDescriptionLabel: "固件说明",
   downloadFirmwareLocalLink: "下载固件到本地",
+  closeBtn: "关闭",
 
   downloadBtn: "下载固件",
   flashBtn: "开始烧录",
@@ -366,6 +375,9 @@ const zhCn: Strings = {
   partitionSelectionHintPreserve: "选择需要烧录的分区。未选中的分区不会被修改。",
   erasingFlash: "正在擦除 Flash…",
   downloadingPartitions: "正在下载分区文件…",
+  mergingFirmware: "正在合并分区文件…",
+  downloadReady: "合并固件已准备完成，已自动开始下载。",
+  downloadError: "下载失败：",
   flashingPartition: "正在烧录 {name} 到 {offset}…",
   loadingVersions: "正在加载版本列表…",
   loadVersionsError: "加载版本列表失败",

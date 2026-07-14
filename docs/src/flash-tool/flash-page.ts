@@ -83,6 +83,7 @@ type Strings = {
   firmwareRequirementsLabel: string;
   firmwareDescriptionLabel: string;
   downloadFirmwareLocalLink: string;
+  closeBtn: string;
   downloadBtn: string;
   flashBtn: string;
   flashBtnDisabledNoDevice: string;
@@ -154,6 +155,9 @@ type Strings = {
   partitionSelectionHintPreserve: string;
   erasingFlash: string;
   downloadingPartitions: string;
+  mergingFirmware: string;
+  downloadReady: string;
+  downloadError: string;
   flashingPartition: string;
   loadingVersions: string;
   loadVersionsError: string;
@@ -270,6 +274,9 @@ const els = {
   modalProgressPct: must("modal-progress-pct"),
   modalProgressBar: must("modal-progress-bar"),
   modalProgressLog: must("modal-progress-log"),
+  modalDownloadActions: must("modal-download-actions"),
+  modalDownloadBtn: must<HTMLButtonElement>("modal-download-btn"),
+  modalDownloadCloseBtn: must<HTMLButtonElement>("modal-download-close-btn"),
   modalReconnectPrompt: must("modal-reconnect-prompt"),
   modalReconnectBtn: must<HTMLButtonElement>("modal-reconnect-btn"),
   modalReconnectStatus: must("modal-reconnect-status"),
@@ -323,6 +330,8 @@ const state = {
   detectedConsoleOutput: null as DetectedConsoleOutput,
   readyIp: null as string | null,
   progressLines: [] as string[],
+  downloadBlobUrl: null as string | null,
+  downloadFileName: null as string | null,
   consoleText: "",
   consoleReader: null as ReadableStreamDefaultReader<Uint8Array> | null,
   consoleReading: false,
@@ -430,6 +439,11 @@ async function init() {
   els.disconnectBtn.addEventListener("click", () => { void disconnectDevice(); });
   els.actionDisconnectBtn.addEventListener("click", () => { void disconnectDevice(); });
   els.flashBtn.addEventListener("click", () => { void flashSelectedFirmware(); });
+  els.downloadBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (els.downloadBtn.classList.contains("disabled")) return;
+    void downloadSelectedFirmware();
+  });
   els.consoleToggleBtn.addEventListener("click", () => {
     if (!els.consoleToggleBtn.disabled) {
       switchTab(state.activeTab === "console" ? "flash" : "console");
@@ -443,6 +457,8 @@ async function init() {
   });
   els.modalWifiSubmitBtn.addEventListener("click", () => { void submitWifiCredentials(); });
   els.modalReconnectBtn.addEventListener("click", () => { void reconnectDeviceAfterReset(); });
+  els.modalDownloadBtn.addEventListener("click", () => { triggerPreparedDownload(); });
+  els.modalDownloadCloseBtn.addEventListener("click", () => { if (state.modalCanClose) closeModal(); });
   els.modalCloseBtn.addEventListener("click", () => { if (state.modalCanClose) closeModal(); });
   els.flashModalBg.addEventListener("click", (e) => {
     if (e.target === els.flashModalBg && state.modalCanClose) closeModal();
@@ -562,6 +578,7 @@ function openModal() {
 function closeModal() {
   state.modalStep = 0;
   els.flashModalBg.classList.remove("open");
+  hideDownloadActions();
 }
 
 function renderModalStep(step: 1 | 2 | 3) {
@@ -875,9 +892,8 @@ function renderSelectedBoard() {
   `;
   els.selectedBoardDesc.innerHTML = "";
 
-  // Download button: disabled for per-partition model (individual files)
-  els.downloadBtn.classList.add("disabled");
-  els.downloadBtn.setAttribute("aria-disabled", "true");
+  els.downloadBtn.classList.remove("disabled");
+  els.downloadBtn.setAttribute("aria-disabled", "false");
   els.downloadBtn.href = "#";
 }
 
@@ -1124,6 +1140,7 @@ async function flashSelectedFirmware() {
   hideModalFlashResult();
   renderModalProgress(true);
   renderReconnectPrompt(false);
+  hideDownloadActions();
 
   try {
     const filesToFlash = getFilesToFlash(record);
@@ -1212,6 +1229,52 @@ async function flashSelectedFirmware() {
   }
 }
 
+async function downloadSelectedFirmware() {
+  const selected = getSelectedFirmware();
+  const record = getSelectedConsoleRecord();
+  if (!selected || !record) return;
+
+  openModal();
+  setModalCloseable(false);
+  state.progressLines = [];
+  els.modalProgressLog.textContent = "";
+  hideModalFlashResult();
+  renderModalProgress(true);
+  renderReconnectPrompt(false);
+  hideDownloadActions();
+
+  try {
+    state.flash = "downloading";
+    renderActionState();
+
+    const filesToDownload = getFilesForMergedDownload(record);
+    if (filesToDownload.length === 0) {
+      throw new Error("No partition files available for download.");
+    }
+
+    const downloadedFiles = await downloadPartitionFiles(filesToDownload, s.downloadingPartitions);
+    updateModalProgress(s.mergingFirmware, 0);
+    addProgressLine(s.mergingFirmware);
+
+    const merged = mergePartitionFiles(downloadedFiles);
+    const fileName = buildMergedFirmwareFileName(selected, state.selectedConsoleOutput);
+    const blob = new Blob([merged], { type: "application/octet-stream" });
+    setPreparedDownload(blob, fileName);
+
+    updateModalProgress(s.mergingFirmware, 100);
+    showModalFlashSuccess(s.downloadReady);
+    showDownloadActions();
+    setModalCloseable(true);
+    triggerPreparedDownload();
+  } catch (error) {
+    showModalFlashError(`${s.downloadError}${getErrorMessage(error)}`);
+    setModalCloseable(true);
+  } finally {
+    state.flash = "idle";
+    renderActionState();
+  }
+}
+
 function getFilesToFlash(record: FirmwareRecord) {
   const isFullErase = state.flashMode === "full-erase";
   const files: Array<{ offset: number; url: string; name: string }> = [];
@@ -1229,6 +1292,60 @@ function getFilesToFlash(record: FirmwareRecord) {
 
   files.sort((a, b) => a.offset - b.offset);
   return files;
+}
+
+function getFilesForMergedDownload(record: FirmwareRecord) {
+  const files: Array<{ offset: number; url: string; name: string }> = [];
+
+  for (const [offsetStr, urlPath] of Object.entries(record.flash_files)) {
+    const offsetNum = Number.parseInt(offsetStr, 0);
+    if (!Number.isFinite(offsetNum) || offsetNum < 0) continue;
+
+    const fileName = urlPath.split("/").pop() ?? urlPath;
+    const url = resolveFileUrl(urlPath);
+    files.push({ offset: offsetNum, url, name: fileName });
+  }
+
+  files.sort((a, b) => a.offset - b.offset);
+  return files;
+}
+
+async function downloadPartitionFiles(
+  files: Array<{ offset: number; url: string; name: string }>,
+  stage: string,
+) {
+  const downloadedFiles: Array<{ offset: number; data: Uint8Array; name: string }> = [];
+
+  for (let i = 0; i < files.length; i++) {
+    const { offset, url, name } = files[i];
+    const pctBase = Math.round((i / files.length) * 100);
+    updateModalProgress(stage, pctBase);
+    addProgressLine(`${stage} (${i + 1}/${files.length}): ${name}`);
+
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} downloading ${name}`);
+    const data = new Uint8Array(await resp.arrayBuffer());
+    downloadedFiles.push({ offset, data, name });
+  }
+
+  updateModalProgress(stage, 100);
+  return downloadedFiles;
+}
+
+function mergePartitionFiles(files: Array<{ offset: number; data: Uint8Array }>) {
+  let totalSize = 0;
+  for (const file of files) {
+    totalSize = Math.max(totalSize, file.offset + file.data.byteLength);
+  }
+
+  const merged = new Uint8Array(totalSize);
+  merged.fill(0xff);
+
+  for (const file of files) {
+    merged.set(file.data, file.offset);
+  }
+
+  return merged;
 }
 
 function resolveFileUrl(urlPath: string): string {
@@ -1501,6 +1618,18 @@ function renderModalProgress(visible: boolean) {
   els.modalProgressWrap.classList.toggle("visible", visible);
 }
 
+function showDownloadActions() {
+  els.modalDownloadActions.hidden = false;
+  els.modalDownloadBtn.disabled = !state.downloadBlobUrl || !state.downloadFileName;
+  els.modalDownloadCloseBtn.disabled = false;
+}
+
+function hideDownloadActions() {
+  els.modalDownloadActions.hidden = true;
+  els.modalDownloadBtn.disabled = true;
+  els.modalDownloadCloseBtn.disabled = true;
+}
+
 function renderReconnectPrompt(visible: boolean) {
   els.modalReconnectPrompt.hidden = !visible;
   if (!visible) els.modalReconnectStatus.textContent = "";
@@ -1539,6 +1668,45 @@ function showModalFlashSuccess(message: string) {
 function hideModalFlashResult() {
   els.modalFlashResult.textContent = "";
   els.modalFlashResult.className = "modal-flash-result";
+}
+
+function setPreparedDownload(blob: Blob, fileName: string) {
+  if (state.downloadBlobUrl) {
+    URL.revokeObjectURL(state.downloadBlobUrl);
+  }
+  state.downloadBlobUrl = URL.createObjectURL(blob);
+  state.downloadFileName = fileName;
+}
+
+function triggerPreparedDownload() {
+  if (!state.downloadBlobUrl || !state.downloadFileName) return;
+  const link = document.createElement("a");
+  link.href = state.downloadBlobUrl;
+  link.download = state.downloadFileName;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function buildMergedFirmwareFileName(
+  selected: VisibleBoard,
+  consoleOutput: string | null,
+) {
+  const app = state.selectedApp ?? "firmware";
+  const version = state.selectedVersion ?? "master";
+  const consoleName = consoleOutput ?? "console";
+  return [
+    sanitizeFileNamePart(app),
+    sanitizeFileNamePart(version),
+    sanitizeFileNamePart(selected.boardKey),
+    sanitizeFileNamePart(consoleName),
+    "merged.bin",
+  ].join("__");
+}
+
+function sanitizeFileNamePart(value: string) {
+  return value.trim().replace(/[^a-zA-Z0-9._-]+/g, "_");
 }
 
 // ── Console helpers ──────────────────────────────────────────────────────────

@@ -948,6 +948,13 @@ const flashBootJson = JSON.stringify({
       max-height: 150px;
     }
 
+    .modal-download-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+
     .reconnect-prompt {
       margin-top: 1rem;
       padding: 1rem;
@@ -1418,6 +1425,14 @@ const flashBootJson = JSON.stringify({
             <div class="progress-bar" id="modal-progress-bar"></div>
           </div>
           <div class="progress-log" id="modal-progress-log"></div>
+        </div>
+        <div class="modal-download-actions" id="modal-download-actions" hidden>
+          <button type="button" class="btn-primary" id="modal-download-btn">
+            {s.downloadBtn}
+          </button>
+          <button type="button" class="btn-secondary" id="modal-download-close-btn">
+            {s.closeBtn}
+          </button>
         </div>
         <div class="reconnect-prompt" id="modal-reconnect-prompt" hidden>
           <div class="reconnect-title">{s.postFlashReconnectTitle}</div>
