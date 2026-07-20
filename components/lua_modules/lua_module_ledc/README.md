@@ -1,0 +1,43 @@
+# Lua LEDC
+
+This module describes how to use `ledc` from Lua for generic PWM output such as
+servo control.
+
+## How to call
+
+- Import it with `local ledc = require("ledc")`
+- Create a PWM handle with `local pwm = ledc.new({ gpio = 4, frequency_hz = 50, duty_percent = 7.5 })`
+- Start output with `pwm:start()` or `pwm:set_enabled(true)`
+- Change duty cycle with `pwm:set_duty(percent)`
+- Change frequency with `pwm:set_frequency(hz)`
+- Stop output with `pwm:stop()` or `pwm:set_enabled(false)`
+- Release resources with `pwm:close()`
+
+## Config table
+
+- `gpio`: required output GPIO
+- `frequency_hz`: optional, defaults to `1000`
+- `duty_percent`: optional, defaults to `50`
+- `duty_resolution_bits`: optional, defaults to `14`
+
+When camera support is enabled, dynamic Lua LEDC allocation skips timer 0 and
+channel 0. Some board-manager camera devices use those LEDC resources for sensor
+XCLK before Lua starts, and reconfiguring them for servo PWM can break camera
+frame timing.
+
+## Example
+
+```lua
+local ledc = require("ledc")
+
+local pwm = ledc.new({
+    gpio = 4,
+    frequency_hz = 50,
+    duty_percent = 7.5,
+})
+
+pwm:start()
+pwm:set_duty(12.5)
+pwm:stop()
+pwm:close()
+```
